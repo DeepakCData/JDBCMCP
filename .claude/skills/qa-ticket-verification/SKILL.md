@@ -388,6 +388,17 @@ treated as HTTP/cloud and proxied.
 
 ---
 
+## Permissions — reads are free, writes always confirm
+This project's `.claude/settings.json` allowlists every read/list/search tool on Jira
+(`atlassian`), Azure DevOps (`azure-devops`), and `jdbc-platform` (`execute_query`,
+`execute_prepared`, `get_metadata`, `compare_queries`, `assert_query`, `record_check`,
+`export_results`, `list_sessions`, `get_usage_stats`, `get_test_report`), plus read-only shell
+commands. Use these without asking — just narrate what you're reading as you go through Phases
+1–4. This does not loosen the write boundary: `execute_update`, `load_driver`, `connect`/
+`disconnect`, and any Jira/ADO create/update/comment/PR tool still prompt for confirmation, and
+posting to Jira/ADO always requires the engineer's explicit go-ahead regardless of what the
+permission system allows (see Phase 5 and the principle below).
+
 ## Principles
 - **Investigate before you test.** The strongest test cases come from the comments and the actual
   diff, not the title.

@@ -11,6 +11,14 @@ Claude skill).
 `execute_java`, `get_metadata`, `list_sessions`, `get_usage_stats`, `disconnect`, `record_check`,
 `assert_query`, `compare_queries`, `get_test_report`, `export_results`.
 
+**Permissions:** the checked-in [.claude/settings.json](.claude/settings.json) allowlists every
+read/list/search tool on `jdbc-platform`, Jira (`atlassian`), and Azure DevOps (`azure-devops`),
+plus read-only shell commands — so Claude reads freely without prompting. Writes
+(`execute_update`, `connect`/`disconnect`, any Jira/ADO create/update/comment tool) always still
+prompt. This assumes the companion servers are registered under the names `atlassian` and
+`azure-devops` (see ONBOARDING.md Phase 5) — a different registration name means those specific
+reads will prompt too, until matching rules are added locally.
+
 ---
 
 ## Quick start (new machine)

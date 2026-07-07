@@ -46,6 +46,18 @@ Follow these strictly while running the setup:
    them exactly what's needed and where to get it.
 6. **Report, then proceed.** After the preflight, show the user a status summary (present / missing
    / needs action) before doing anything. Let them decide the order.
+7. **Reads don't need permission, writes do.** This repo ships a checked-in
+   `.claude/settings.json` that allowlists read-only operations — file/process inspection
+   (`Get-ChildItem`, `cat`, `grep`, `git status/log/diff`, …) and every read/list/search tool on
+   `jdbc-platform`, the `atlassian` Jira server, and the `azure-devops` server. Use these freely
+   and just tell the user what you're reading — don't ask first. Anything that mutates state
+   (`execute_update`, `load_driver`, `connect`/`disconnect`, any Jira/ADO create/update/comment/PR
+   tool, destructive shell commands) still prompts, and always will — that boundary is
+   intentional, not a bug to route around. **The allowlist assumes the companion servers are
+   registered under the exact names `atlassian` and `azure-devops`** (Phase 5's commands use
+   these). If a user's registration uses a different name, the permission rules won't match and
+   they'll see prompts for reads too — tell them to either re-register under the standard name or
+   add matching `mcp__<their-server-name>__*` rules to their own `.claude/settings.local.json`.
 
 ---
 

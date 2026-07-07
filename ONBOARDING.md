@@ -62,6 +62,12 @@ Run each check and record the result. Translate the command to the user's actual
 | 5 | Current repo absolute path | `Get-Location` (or `pwd`) | Note it — needed for MCP registration |
 | 6 | The QA skill in the repo | check `.claude/skills/qa-ticket-verification/SKILL.md` exists | File present |
 | 7 | Is `jdbc-platform` already registered? | `claude mcp list` | Note if already present |
+| 8 | Jira (Atlassian) MCP registered? | same `claude mcp list` output | An `atlassian` (or equivalent Jira) server present |
+| 9 | Azure DevOps MCP registered? | same `claude mcp list` output | An `azure-devops` server present |
+
+Checks 8–9 are the **companion servers the QA skill depends on** — Jira to read the ticket,
+Azure DevOps to read the implemented fix. If either is missing, you will offer to register it in
+Phase 5. The JDBC server itself works without them.
 
 After running all of these, produce a short status table for the user, e.g.:
 
@@ -71,6 +77,8 @@ Server JAR       [missing] not built yet
 mitmproxy        [missing] not installed
 QA skill         [ok] present in repo
 MCP registered   [missing] not yet
+Jira MCP         [missing] not registered — QA skill can't read tickets
+Azure DevOps MCP [missing] not registered — QA skill can't read PR diffs
 Repo path        C:\Users\<them>\...\jdbc-mcp-server
 ```
 
@@ -151,12 +159,39 @@ works here.
 
 ---
 
-## Phase 5 — Things you CANNOT set up for them (ask the user)
+## Phase 5 — Companion MCP servers + things only the user can provide
 
-These require values or files only the user has. List the ones relevant to their goals and ask
-for them — do not proceed past this silently if the user intends to use these features.
+The QA skill needs two more MCP servers besides `jdbc-platform`: **Jira (Atlassian)** to read
+tickets and **Azure DevOps** to read the implemented fix. **If the preflight (checks 8–9) found
+either missing, proactively prompt the user here** — explain what each enables, ask if they want
+it registered, and only run the command after a clear "yes". If the user does QA tickets at all,
+recommend both. If they decline, note the limitation (the skill will fall back to asking for
+ticket details / PR links manually) and move on.
 
-### CData driver JARs (required to connect to CData sources)
+### Jira (Atlassian) MCP server — lets the QA skill read tickets (Phase 1 of the skill)
+If no `atlassian` server was found, propose registering Atlassian's official remote MCP server
+(OAuth in the browser — no API token needed):
+```powershell
+claude mcp add --transport sse atlassian https://mcp.atlassian.com/v1/sse
+```
+After restarting Claude Code, the user completes sign-in via the `/mcp` command. If their
+organization blocks the remote server, the alternative is an API-token-based Jira MCP server —
+ask for their Atlassian site URL, email, and an API token
+(from https://id.atlassian.com/manage-profile/security/api-tokens). Never write a placeholder
+token — get the real one or skip.
+
+### Azure DevOps MCP server — lets the QA skill read the fix/PR diff (Phase 2 of the skill)
+If no `azure-devops` server was found, ask the user for their **ADO organization name** and a
+**Personal Access Token** (generate at `https://dev.azure.com/<org>/_usersSettings/tokens`, with
+at least Code: Read and Work Items: Read scopes). Requires Node.js (`npx`) — verify it's present
+first. Then propose:
+```powershell
+claude mcp add azure-devops --env AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp <their-org> -a env
+```
+Never invent or hardcode a PAT. If the user skips this, tell them the QA skill will ask them to
+paste PR links/diffs manually (or proceed without fix review) when it reaches Phase 2.
+
+### CData driver JARs (required to connect to CData sources — cannot be automated)
 The server includes **no** driver JARs — they are licensed separately. Ask the user:
 - Which connectors do they need (Salesforce, SAP ERP, SharePoint, etc.)?
 - Where are the `.jar` files on their machine? (typical Windows path:
@@ -164,17 +199,6 @@ The server includes **no** driver JARs — they are licensed separately. Ask the
 - If they don't have them, point them to https://www.cdata.com/jdbc/ to license/download.
 
 You'll pass the JAR path to `load_driver` at runtime — you don't install it.
-
-### Jira / Atlassian credentials (only if using the QA skill against Jira)
-The QA skill reads Jira tickets via the Atlassian MCP server. If that's not already configured,
-ask the user for their Atlassian site URL, email, and an API token
-(from https://id.atlassian.com/manage-profile/security/api-tokens), then propose adding an
-`atlassian` MCP server. Never write a placeholder token — get the real one or skip.
-
-### Azure DevOps PAT (only if the QA skill needs ADO PR/diff lookups)
-The skill reads the implemented fix from Azure DevOps. If used, the user needs a Personal Access
-Token set as `AZURE_DEVOPS_EXT_PAT` (generate at
-`https://dev.azure.com/<org>/_usersSettings/tokens`). Ask for it; don't hardcode it.
 
 ---
 

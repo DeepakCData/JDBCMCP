@@ -57,14 +57,22 @@ engineer to confirm before designing tests.
 
 A test that doesn't target what actually changed is weak. Find the implemented fix and read it:
 
-- From Phase 1, collect the **work item ID / PR ID / commit** (from Jira remote links,
-  the development panel, or comments referencing `!PR 123` / commit hashes).
+- From Phase 1, collect the **work item ID / PR ID / commit** — check `getJiraIssueRemoteIssueLinks`,
+  the development panel, and comments referencing `!PR 123` / commit hashes.
 - Inspect with the Azure DevOps MCP tools (`repo_get_pull_request_by_id`,
   `repo_get_pull_request_changes` with `includeDiffs: true`, `wit_get_work_item`,
   `search_commits`). Or the `az` CLI (`az repos pr show --id <id> --output json`,
   `az repos pr diff`) if you prefer.
-- If the ADO items aren't linked or the tooling isn't set up, ask the engineer for the **PR URL or
-  the diff**, or open the PR in the browser. Don't guess what changed.
+- **If no PR/commit link surfaced anywhere** (remote links empty, no dev panel entry, nothing in
+  comments), or the Azure DevOps tooling isn't set up — **stop and ask the engineer, offering two
+  explicit options:**
+  1. **Provide the PR link** (URL or ID) or paste the diff, and you'll review the fix as normal.
+  2. **Proceed without PR review** — skip Phase 2 and derive test cases from the ticket alone
+     (description, acceptance criteria, comments).
+  Never guess what changed. If the engineer chooses option 2, say clearly that coverage is
+  weaker (tests can't target the actual code paths that changed, and regression scope is
+  unknown), carry on from Phase 3 using only Phase 1 findings, and **flag in the final report**
+  that the fix was not reviewed — verdicts confirm ticket behaviour, not the implementation.
 
 From the diff, identify the **blast radius** for data testing:
 - Which **tables / columns / views / stored procedures** were touched
@@ -192,7 +200,9 @@ Always follow this sequence — never skip a step:
 - `get_usage_stats` — include `total_queries`, `total_intercepted_calls`, `estimated_tokens_used`.
 - `export_results` — write evidence rows to CSV when an attachment is wanted.
 - Summarize the verdict: which acceptance criteria passed/failed, the concrete data behind each,
-  and whether the fix from Phase 2 actually does what the ticket asked.
+  and whether the fix from Phase 2 actually does what the ticket asked. If Phase 2 was skipped
+  (no PR link, engineer chose to proceed without fix review), state that prominently: the verdict
+  covers ticket behaviour only, not the implementation.
 - **Always include a Traffic Capture line** in the report summary:
   - State `driver_category`, `proxy_applied`, `mitm_status`, whether `proxy_fallback` triggered,
     and which capture channel was active: **mitmproxy JSONL** or **CData driver log at `<path>`**.

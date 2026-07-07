@@ -52,8 +52,12 @@ have run at least once, and Java must be on PATH.
 - **CData driver JARs** — licensed separately, not included. Typical location:
   `C:\Program Files\CData\CData JDBC Driver for <Product> 2025\lib\`. Get them at
   <https://www.cdata.com/jdbc/>. You pass the JAR path to `load_driver` at runtime.
-- **Jira (Atlassian) MCP + Azure DevOps PAT** — only needed for the QA-ticket skill's
-  investigation phases. See ONBOARDING.md Phase 5.
+- **Jira (Atlassian) MCP + Azure DevOps MCP** — needed for the QA-ticket skill's investigation
+  phases (reading the ticket and the fix's PR diff). The ONBOARDING.md flow detects whether they
+  are registered and offers to set them up — Atlassian via its remote OAuth server, Azure DevOps
+  via `npx @azure-devops/mcp` with your org name and a PAT (Code: Read + Work Items: Read).
+  If you skip them, the QA skill asks for ticket details / PR links manually, or can proceed
+  without PR review at your choice.
 
 ---
 

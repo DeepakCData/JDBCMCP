@@ -1,0 +1,12 @@
+{
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "allow": [
+      "Bash(java -version)",
+      "Bash(mitmdump --version)",
+      "Bash(./mvnw:*)",
+      "Bash(./mvnw.cmd:*)",
+      "Bash(claude mcp list)"
+    ]
+  }
+}

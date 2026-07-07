@@ -1,0 +1,21 @@
+# Build output
+target/
+
+# Self-provisioned Maven distribution (mvnw / mvnw.cmd re-downloads it on demand)
+.mvn-dist/
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+
+# Python bytecode (mitmproxy addon experiments)
+__pycache__/
+*.pyc
+
+# Personal Claude Code settings — may contain machine paths and secrets. NEVER share.
+.claude/settings.local.json
+
+# Runtime logs and capture artifacts
+mitm_requests.log
+*.jsonl

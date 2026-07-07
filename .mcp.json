@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jdbc-platform": {
+      "command": "java",
+      "args": ["-jar", "target/jdbc-mcp-server-1.0-SNAPSHOT.jar"]
+    }
+  }
+}

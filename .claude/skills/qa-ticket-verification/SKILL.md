@@ -46,6 +46,8 @@ Expected:        [exact value, type, row count, or behaviour]
 Actual (pre-fix):[what was observed]
 Fix summary:     [what the developer changed]
 Session target:  [connection string to use]
+Major Version Affected: [the ticket's "Major Version Affected" field, e.g. v25 — feeds the
+                          Phase 2 automated PR search]
 ```
 
 If acceptance criteria are vague or missing, state your interpretation explicitly and ask the
@@ -57,15 +59,32 @@ engineer to confirm before designing tests.
 
 A test that doesn't target what actually changed is weak. Find the implemented fix and read it:
 
-- From Phase 1, collect the **work item ID / PR ID / commit** — check `getJiraIssueRemoteIssueLinks`,
-  the development panel, and comments referencing `!PR 123` / commit hashes.
+- From Phase 1, collect the **work item ID / PR ID / commit** — check `getJiraIssueRemoteIssueLinks`
+  and comments referencing `!PR 123` / commit hashes. (Jira's "Development" panel, when the
+  engineer can see it in the browser, often has it too — but no current MCP tool exposes that
+  panel's data, so don't expect to find it through `getJiraIssueRemoteIssueLinks` alone.)
 - Inspect with the Azure DevOps MCP tools (`repo_get_pull_request_by_id`,
   `repo_get_pull_request_changes` with `includeDiffs: true`, `wit_get_work_item`,
   `search_commits`). Or the `az` CLI (`az repos pr show --id <id> --output json`,
   `az repos pr diff`) if you prefer.
-- **If no PR/commit link surfaced anywhere** (remote links empty, no dev panel entry, nothing in
-  comments), or the Azure DevOps tooling isn't set up — **stop and ask the engineer, offering two
-  explicit options:**
+- **If nothing surfaced from Jira** (remote links empty, nothing in comments), **before giving
+  up, search the `drivers` repo directly for the fix** — no MCP tool exposes Jira's Development
+  panel (linked PRs from a connected source-control app), so this is the reliable automated path:
+  1. Build the branch list to search: `{v25, v26, <the ticket's Major Version Affected value>}`,
+     de-duplicated (e.g. a ticket affecting v27 searches `v25`, `v26`, `v27`).
+  2. For each branch, call `repo_search_commits(project="drivers", repository="drivers",
+     searchText="<ticket key, e.g. DRIVERS-59445>", version="<branch>", versionType="Branch")`.
+     2–3 cheap calls, one per branch.
+  3. For any commit(s) found, resolve the owning PR(s) with
+     `repo_list_pull_requests_by_commits(commitIds=[...])`.
+  4. If this finds one or more PRs, treat that as the implemented fix and continue below
+     normally. A fix may land on more than one branch (backports) — review all of them, not just
+     the first.
+  5. This relies on commit messages referencing the Jira key (e.g. `DRIVERS-59445: ...`) — if the
+     team didn't follow that convention for this ticket, it will find nothing; fall through to
+     asking the engineer.
+- **If the ADO search above also finds nothing**, or the Azure DevOps tooling isn't set up —
+  **stop and ask the engineer, offering two explicit options:**
   1. **Provide the PR link** (URL or ID) or paste the diff, and you'll review the fix as normal.
   2. **Proceed without PR review** — skip Phase 2 and derive test cases from the ticket alone
      (description, acceptance criteria, comments).
@@ -359,6 +378,12 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 ---
 
 ## CData-specific knowledge
+
+**Source repo for PR discovery (Phase 2):** all driver source lives in a single Azure DevOps
+repo — org `cdatasoftware`, project `drivers`, repository `drivers` — with long-lived release
+branches named `v<major>` (e.g. `v25` is the current default, `v26` the next). Commit messages
+are expected to reference the Jira key (e.g. `DRIVERS-59445: ...`); the automated PR search in
+Phase 2 depends on that convention holding.
 
 **Driver short names** (for `load_driver` / `connect`): `acumatica`, `bigquery`, `box`,
 `dynamics365`, `dynamicscrm`, `excel`, `googledrive`, `googlesheets`, `hubspot`, `jira`, `marketo`,

@@ -119,14 +119,16 @@ This is what your test cases must target — plus regression around it.
 three things explicitly in your response:
 1. **Comments reviewed** — the line you filled in during Phase 1. If it's missing or you're not
    sure, go back and re-call `getJiraIssue` with `fields: ["*all", "comment"]` before continuing.
-2. **PR/diff reviewed** — the specific PR ID and a one-line summary of what changed (from Phase 2),
-   or an explicit note that the engineer chose to proceed without fix review.
+2. **PR/diff reviewed** — the specific PR ID and a one-line summary of what changed (from Phase 2).
+   **"No PR found" is only a valid entry here if Phase 2's ask-the-engineer step already ran and
+   the engineer chose option 2 (proceed without fix review).** It is never a way to skip that ask
+   — if you reach this gate with no PR and haven't asked the engineer yet, stop and go back to
+   Phase 2 first.
 3. **Description/acceptance criteria** — restated in your own words, not just re-read silently.
 
-If any of the three is genuinely unavailable (no PR found, no comments exist), say so explicitly
-— "no comments on this ticket" is a fine answer; a silently skipped check is not. This restatement
-is what test cases in Phase 3 must cite back to — every test should trace to one of these three
-sources, not to an assumption.
+"No comments on this ticket" is a fine answer for #1 if `getJiraIssue` genuinely returned zero
+comments — a silently skipped check is not. This restatement is what test cases in Phase 3 must
+cite back to — every test should trace to one of these three sources, not to an assumption.
 
 ## Phase 3 — Derive test cases
 

@@ -20,8 +20,15 @@ phases in order. Show your reasoning at each phase before acting.
 
 ## Phase 1 — Understand the requirement (Jira)
 
-Use the Atlassian MCP tools (`getJiraIssue`, `getJiraIssueRemoteIssueLinks`,
-`searchJiraIssuesUsingJql`). Don't read only the title — read **everything**:
+**Call `getJiraIssue` with `fields: ["*all", "comment"]`.** This is not optional — the tool
+defaults to a small field subset (summary, description, status, issuetype, priority, labels,
+components, assignee, reporter, created, updated, resolution, project) that **excludes comments
+and every custom field entirely**, including "Major Version Affected". Calling it without
+`fields` set will silently return an incomplete ticket — the comments and custom fields aren't
+truncated or hidden, they're just never in the response, so there is nothing to notice is
+missing. Every case of comments being missed in test-case design traces back to this. Also use
+`getJiraIssueRemoteIssueLinks` and `searchJiraIssuesUsingJql` as needed. Don't read only the
+title — read **everything**:
 
 - **Description & acceptance criteria** — the testable claims. Each becomes one or more checks.
 - **Comments** — often contain the real story: edge cases found in triage, repro steps,
@@ -48,6 +55,11 @@ Fix summary:     [what the developer changed]
 Session target:  [connection string to use]
 Major Version Affected: [the ticket's "Major Version Affected" field, e.g. v25 — feeds the
                           Phase 2 automated PR search]
+Comments reviewed: [N comments found; one line per comment that adds information beyond the
+                     description — new repro, edge case, corrected expected value, scope
+                     change — or state "none added new information" if all N were reviewed and
+                     none did. Never leave this blank — an empty value here means comments
+                     weren't fetched, go back and fix the getJiraIssue call above.]
 ```
 
 If acceptance criteria are vague or missing, state your interpretation explicitly and ask the
@@ -102,6 +114,19 @@ From the diff, identify the **blast radius** for data testing:
 This is what your test cases must target — plus regression around it.
 
 ---
+
+**Gate before Phase 3 — do not skip this.** Before deriving a single test case, restate these
+three things explicitly in your response:
+1. **Comments reviewed** — the line you filled in during Phase 1. If it's missing or you're not
+   sure, go back and re-call `getJiraIssue` with `fields: ["*all", "comment"]` before continuing.
+2. **PR/diff reviewed** — the specific PR ID and a one-line summary of what changed (from Phase 2),
+   or an explicit note that the engineer chose to proceed without fix review.
+3. **Description/acceptance criteria** — restated in your own words, not just re-read silently.
+
+If any of the three is genuinely unavailable (no PR found, no comments exist), say so explicitly
+— "no comments on this ticket" is a fine answer; a silently skipped check is not. This restatement
+is what test cases in Phase 3 must cite back to — every test should trace to one of these three
+sources, not to an assumption.
 
 ## Phase 3 — Derive test cases
 

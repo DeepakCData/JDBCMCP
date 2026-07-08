@@ -74,8 +74,9 @@ Run each check and record the result. Translate the command to the user's actual
 | 5 | Current repo absolute path | `Get-Location` (or `pwd`) | Note it — needed for MCP registration |
 | 6 | The QA skill in the repo | check `.claude/skills/qa-ticket-verification/SKILL.md` exists | File present |
 | 7 | Is `jdbc-platform` already registered? | `claude mcp list` | Note if already present |
-| 8 | Jira (Atlassian) MCP registered? | same `claude mcp list` output | An `atlassian` (or equivalent Jira) server present |
+| 8 | Jira (Atlassian) MCP registered? | same `claude mcp list` output | An `atlassian` (or equivalent Jira) server, or a `claude.ai Atlassian` connector, present |
 | 9 | Azure DevOps MCP registered? | same `claude mcp list` output | An `azure-devops` server present |
+| 10 | Node.js / `npx` (only needed for check 9's fix) | `npx --version` | Reports a version — required by the Azure DevOps MCP package |
 
 Checks 8–9 are the **companion servers the QA skill depends on** — Jira to read the ticket,
 Azure DevOps to read the implemented fix. If either is missing, you will offer to register it in
@@ -91,6 +92,7 @@ QA skill         [ok] present in repo
 MCP registered   [missing] not yet
 Jira MCP         [missing] not registered — QA skill can't read tickets
 Azure DevOps MCP [missing] not registered — QA skill can't read PR diffs
+Node.js / npx    [ok] found (v20.11.0) — needed if registering Azure DevOps
 Repo path        C:\Users\<them>\...\jdbc-mcp-server
 ```
 
@@ -180,11 +182,17 @@ it registered, and only run the command after a clear "yes". If the user does QA
 recommend both. If they decline, note the limitation (the skill will fall back to asking for
 ticket details / PR links manually) and move on.
 
+**Both commands below are verified working (confirmed against a live, connected registration) —
+run them exactly as written. Do not improvise alternate flags, package names, or URLs, and do not
+try to "figure out" a different setup path first; that only burns time on a problem that's already
+solved.** If a verified command still fails, the fix is almost always the PAT/scopes or a stale
+`npx` cache — see Troubleshooting below — not a different command shape.
+
 ### Jira (Atlassian) MCP server — lets the QA skill read tickets (Phase 1 of the skill)
-If no `atlassian` server was found, propose registering Atlassian's official remote MCP server
-(OAuth in the browser — no API token needed):
+If no Jira/Atlassian server or connector was found, register Atlassian's official remote MCP
+server (HTTP transport, OAuth in the browser — no API token needed):
 ```powershell
-claude mcp add --transport sse atlassian https://mcp.atlassian.com/v1/sse
+claude mcp add --transport http atlassian https://mcp.atlassian.com/v1/mcp
 ```
 After restarting Claude Code, the user completes sign-in via the `/mcp` command. If their
 organization blocks the remote server, the alternative is an API-token-based Jira MCP server —
@@ -195,13 +203,30 @@ token — get the real one or skip.
 ### Azure DevOps MCP server — lets the QA skill read the fix/PR diff (Phase 2 of the skill)
 If no `azure-devops` server was found, ask the user for their **ADO organization name** and a
 **Personal Access Token** (generate at `https://dev.azure.com/<org>/_usersSettings/tokens`, with
-at least Code: Read and Work Items: Read scopes). Requires Node.js (`npx`) — verify it's present
-first. Then propose:
+at least Code: Read and Work Items: Read scopes). Requires Node.js (`npx`) — check #10 in Phase 0.
+Then run exactly:
 ```powershell
-claude mcp add azure-devops --env AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp <their-org> -a env
+claude mcp add azure-devops -e AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp <their-org> -a env
 ```
-Never invent or hardcode a PAT. If the user skips this, tell them the QA skill will ask them to
-paste PR links/diffs manually (or proceed without fix review) when it reaches Phase 2.
+The `-a env` flag tells the package to read the PAT from `AZURE_DEVOPS_EXT_PAT` non-interactively
+— don't substitute `-a azcli` or `-a interactive`, they require a signed-in `az` CLI or a TTY
+prompt and will hang or fail in an agent-driven setup. Never invent or hardcode a PAT.
+
+**After either registration, verify before moving on** — don't just assume success:
+```powershell
+claude mcp list
+```
+Confirm the server shows `✔ Connected`, not `! Needs authentication` or an error. If the user
+skips a server entirely, tell them the QA skill will ask them to paste ticket details / PR links
+manually (or proceed without fix review) when it reaches that phase.
+
+**Troubleshooting (don't reach for a different command — fix the actual cause):**
+- First run after registering Azure DevOps can take 10–20s while `npx` downloads
+  `@azure-devops/mcp` — re-run `claude mcp list` after a short wait before assuming failure.
+- `! Needs authentication` on Azure DevOps almost always means the PAT is wrong, expired, or
+  missing scopes — regenerate it, then `claude mcp remove azure-devops -s user` and re-add.
+- `npx --version` missing — Node.js isn't installed; point the user to https://nodejs.org, don't
+  try to install it silently.
 
 ### CData driver JARs (required to connect to CData sources — cannot be automated)
 The server includes **no** driver JARs — they are licensed separately. Ask the user:

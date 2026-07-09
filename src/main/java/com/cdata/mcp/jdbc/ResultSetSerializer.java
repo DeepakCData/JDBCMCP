@@ -5,6 +5,7 @@ import com.cdata.mcp.config.Config;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -13,6 +14,11 @@ import java.util.List;
 import java.util.Map;
 
 public class ResultSetSerializer {
+
+    // LocalDateTime/LocalTime.toString() omits seconds (and smaller) when they are zero.
+    // These formatters guarantee seconds are always present in the output.
+    private static final DateTimeFormatter TIMESTAMP_FMT = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss");
+    private static final DateTimeFormatter TIME_FMT      = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     /** truncated = true when more rows were available than the row cap allowed. */
     public record SerializedResult(List<Map<String, Object>> rows,
@@ -81,11 +87,11 @@ public class ResultSetSerializer {
             }
             case Types.TIME -> {
                 Time v = rs.getTime(col);
-                yield v != null ? v.toLocalTime().toString() : null;
+                yield v != null ? v.toLocalTime().format(TIME_FMT) : null;
             }
             case Types.TIMESTAMP -> {
                 Timestamp v = rs.getTimestamp(col);
-                yield v != null ? v.toLocalDateTime().toString() : null;
+                yield v != null ? v.toLocalDateTime().format(TIMESTAMP_FMT) : null;
             }
             case Types.TIME_WITH_TIMEZONE, Types.TIMESTAMP_WITH_TIMEZONE -> {
                 try {

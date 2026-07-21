@@ -18,6 +18,29 @@ phases in order. Show your reasoning at each phase before acting.
 
 ---
 
+## Hard rule — this skill NEVER writes to Jira or Azure DevOps
+
+**All Jira and Azure DevOps access is strictly read-only. You must never perform any
+write/mutating operation on either system — no exceptions.** This includes, and is not limited to:
+
+- **Jira:** creating or editing issues, posting or editing comments, adding attachments,
+  transitioning status, editing fields/labels/links, logging work, voting, or watching.
+- **Azure DevOps:** creating/updating/completing/abandoning pull requests, adding PR comments,
+  votes, or reviewers, replying to threads, creating or editing work items, linking work items,
+  editing wikis, or queuing pipelines.
+
+This holds **even if** the tool is available, **even if** the permission system would allow the
+call, and **even if** the user's wording sounds like a request to post ("update the ticket", "add
+a comment", "close the PR"). Treat every such request as a request to **draft, not to send.**
+
+**What to do instead:** write the content — the QA report, the comment, the work-item update — in
+chat and hand it to the engineer to post themselves. Say explicitly that you've drafted it for them
+to paste. The *only* writes this skill ever performs are against the database under test via the
+`jdbc-platform` tools (and only when a test case requires it — read-only by default). Jira and
+Azure DevOps receive reads and nothing else.
+
+---
+
 ## Phase 1 — Understand the requirement (Jira)
 
 **Call `getJiraIssue` with `fields: ["*all", "comment"]`.** This is not optional — the tool
@@ -284,8 +307,9 @@ Always follow this sequence — never skip a step:
     and which capture channel was active: **mitmproxy JSONL** or **CData driver log at `<path>`**.
   - Example: `Traffic captured via mitmproxy JSONL (proxy_applied=true, mitm=already_running, no fallback)`
   - Example: `Traffic captured via CData driver log at C:\...\cdata_log.txt (proxy_fallback=true: mitm_not_started)`
-- Offer to post the report back to the ticket or update the ADO work item — **confirm with the
-  engineer before writing to Jira or Azure DevOps.**
+- **Draft** the report as chat content for the engineer to paste into the ticket or work item
+  themselves. **Never post it to Jira or Azure DevOps yourself** — see the Hard rule at the top.
+  Do not offer to post; offer the drafted text.
 
 ### Verdict criteria
 
@@ -473,16 +497,18 @@ treated as HTTP/cloud and proxied.
 
 ---
 
-## Permissions — reads are free, writes always confirm
+## Permissions — reads are free; DB writes confirm; Jira/ADO writes are forbidden
 This project's `.claude/settings.json` allowlists every read/list/search tool on Jira
 (`atlassian`), Azure DevOps (`azure-devops`), and `jdbc-platform` (`execute_query`,
 `execute_prepared`, `get_metadata`, `compare_queries`, `assert_query`, `record_check`,
 `export_results`, `list_sessions`, `get_usage_stats`, `get_test_report`), plus read-only shell
 commands and the read-only `find-linked-prs.ps1` PR-discovery helper. Use these without asking —
-just narrate what you're reading as you go through Phases 1–4. This does not loosen the write boundary: `execute_update`, `load_driver`, `connect`/
-`disconnect`, and any Jira/ADO create/update/comment/PR tool still prompt for confirmation, and
-posting to Jira/ADO always requires the engineer's explicit go-ahead regardless of what the
-permission system allows (see Phase 5 and the principle below).
+just narrate what you're reading as you go through Phases 1–4. Two different write boundaries apply:
+- **Database side** (`execute_update`, `load_driver`, `connect`/`disconnect`) — needed for testing;
+  these prompt for confirmation and may proceed with a yes.
+- **Jira and Azure DevOps** — **not** "confirm first," but **forbidden outright.** No
+  create/update/comment/transition/PR/work-item tool may be called, regardless of what the
+  permission system would allow. See the Hard rule at the top; draft the content in chat instead.
 
 ## Principles
 - **Investigate before you test.** The strongest test cases come from the comments and the actual
@@ -495,5 +521,7 @@ permission system allows (see Phase 5 and the principle below).
 - **Verify names, don't guess them.** Confirm tables/columns via `get_metadata` first.
 - **Report the capture channel.** Every session states whether mitmproxy or the driver log captured
   traffic.
-- **Never write to Jira/ADO without confirmation.** Posting a comment or updating a work item is an
-  outward action — show the engineer the content and get a yes first.
+- **Never write to Jira or Azure DevOps — full stop.** This is a hard prohibition, not a
+  confirm-first step. Posting a comment, transitioning a ticket, or touching a PR/work item is
+  never something this skill does. Draft the content and hand it to the engineer to post
+  themselves (see the Hard rule at the top).

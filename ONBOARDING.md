@@ -78,13 +78,17 @@ Run each check and record the result. Translate the command to the user's actual
 | 9 | Azure DevOps MCP registered? | same `claude mcp list` output | An `azure-devops` server present |
 | 10 | Node.js / `npx` (only needed for check 9's fix) | `npx --version` | Reports a version — required by the Azure DevOps MCP package |
 | 11 | Jira API token for PR discovery | check `JIRA_API_TOKEN` and `JIRA_USER_EMAIL` are set (e.g. `[bool]$env:JIRA_API_TOKEN`) | Both present |
+| 12 | Azure DevOps PAT actually works | call the ADO MCP read tool `mcp__azure-devops__core_list_projects` | Returns projects — **not** an auth error / `! Needs authentication` |
 
 Checks 8–9 are the **companion servers the QA skill depends on** — Jira to read the ticket,
 Azure DevOps to read the implemented fix. Check 11 is the **Jira classic API token** that powers
-definitive linked-PR discovery (the dev-status API — see Phase 5). If any of these is missing, you
-will offer to set it up in Phase 5. The JDBC server itself works without them, but **automated PR
-review needs both the Jira token (to find the PR) and the Azure DevOps MCP (to read it)** — without
-those, the QA skill can only review a fix if the engineer hands the PR link or diff directly.
+definitive linked-PR discovery (the dev-status API — see Phase 5). Check 12 goes one step further
+than "is it registered": it **exercises the ADO PAT** with a real read call, so an expired or
+under-scoped token is caught now rather than mid-QA. (Only run check 12 if check 9 found the server
+registered; skip it otherwise.) If any of these is missing, you will offer to set it up in Phase 5.
+The JDBC server itself works without them, but **automated PR review needs both the Jira token (to
+find the PR) and a working Azure DevOps PAT (to read it)** — without those, the QA skill can only
+review a fix if the engineer hands the PR link or diff directly.
 
 After running all of these, produce a short status table for the user, e.g.:
 
@@ -96,6 +100,7 @@ QA skill         [ok] present in repo
 MCP registered   [missing] not yet
 Jira MCP         [missing] not registered — QA skill can't read tickets
 Azure DevOps MCP [missing] not registered — QA skill can't read PR diffs
+Azure DevOps PAT [n/a] MCP not registered (check once it is) — else [ok] valid / [fail] auth error
 Node.js / npx    [ok] found (v20.11.0) — needed if registering Azure DevOps
 Jira API token   [missing] not set — QA skill can't auto-find linked PRs
 Repo path        C:\Users\<them>\...\jdbc-mcp-server
@@ -226,9 +231,13 @@ prompt and will hang or fail in an agent-driven setup. Never invent or hardcode 
 ```powershell
 claude mcp list
 ```
-Confirm the server shows `✔ Connected`, not `! Needs authentication` or an error. If the user
-skips a server entirely, tell them the QA skill will ask them to paste ticket details / PR links
-manually (or proceed without fix review) when it reaches that phase.
+Confirm the server shows `✔ Connected`, not `! Needs authentication` or an error. **For Azure
+DevOps, go one step further and confirm the PAT actually works** (preflight check 12): call the ADO
+read tool `mcp__azure-devops__core_list_projects` and confirm it returns projects rather than an
+auth error. `✔ Connected` only means the process launched — a bad/expired PAT still lists as
+connected but fails on the first real call, so this active ping is what actually proves the PAT.
+If the user skips a server entirely, tell them the QA skill will ask them to paste ticket details /
+PR links manually (or proceed without fix review) when it reaches that phase.
 
 **Troubleshooting (don't reach for a different command — fix the actual cause):**
 - First run after registering Azure DevOps can take 10–20s while `npx` downloads
@@ -247,22 +256,27 @@ driven by the bundled helper `.claude/skills/qa-ticket-verification/find-linked-
 This needs a **classic Atlassian API token** used with HTTP Basic auth. **OAuth 2.0 / scoped
 tokens do NOT work** with the dev-status endpoint — don't create those.
 
-1. Have the user generate a token at https://id.atlassian.com/manage-profile/security/api-tokens
-   (any name; it needs no special scopes — a plain classic token works). **Read-only use only** —
-   this token must never be used for Jira writes.
-2. Store it, plus the token owner's email, in the repo's **`.claude/settings.local.json`** under an
-   `env` block (this file is git-ignored, so the secret is not committed):
+1. Ask the user to generate a token at https://id.atlassian.com/manage-profile/security/api-tokens
+   (any name; it needs no special scopes — a plain classic token works) and **paste it to you in
+   chat, along with their Atlassian email.** Tell them plainly: *"Paste me the token and I'll put
+   it in the safe, git-ignored place myself — you don't need to edit any file."* This token is for
+   **read-only use** (dev-status lookups); it must never be used for Jira writes.
+2. **You write it** — do not make the user edit JSON by hand. Put the token and email into the
+   repo's **`.claude/settings.local.json`** under an `env` block. That file is the safe, expected
+   home for it: it is git-ignored, so the secret is never committed. The block looks like:
    ```json
    {
      "env": {
-       "JIRA_API_TOKEN": "<their-classic-token>",
+       "JIRA_API_TOKEN": "<the-classic-token-they-pasted>",
        "JIRA_USER_EMAIL": "<their-atlassian-email>",
        "JIRA_BASE_URL": "https://cdatajira.atlassian.net"
      }
    }
    ```
-   `JIRA_BASE_URL` is optional (defaults to `https://cdatajira.atlassian.net`); set it for a
-   different Jira site. Never write a placeholder token — get the real one or skip this step.
+   Merge into any existing `env`/top-level keys — don't clobber the file. `JIRA_BASE_URL` is
+   optional (defaults to `https://cdatajira.atlassian.net`); set it for a different Jira site.
+   Never write a placeholder token — get the real one from the user or skip this step. After
+   writing, confirm to the user where you put it and that it won't be committed.
 3. Verify end-to-end against a ticket you know has a PR:
    ```powershell
    pwsh .claude/skills/qa-ticket-verification/find-linked-prs.ps1 <TICKET-KEY>

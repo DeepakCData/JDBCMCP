@@ -38,6 +38,9 @@
       "PowerShell(Measure-Object *)",
       "PowerShell(netstat *)",
       "PowerShell(jar tf *)",
+      "PowerShell(pwsh .claude/skills/qa-ticket-verification/find-linked-prs.ps1 *)",
+      "PowerShell(powershell.exe -File .claude/skills/qa-ticket-verification/find-linked-prs.ps1 *)",
+      "Bash(pwsh .claude/skills/qa-ticket-verification/find-linked-prs.ps1 *)",
 
       "mcp__jdbc-platform__execute_query",
       "mcp__jdbc-platform__execute_prepared",

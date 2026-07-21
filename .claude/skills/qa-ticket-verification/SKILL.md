@@ -38,8 +38,10 @@ title — read **everything**:
 - **Issue type & status** — bug vs story vs change shapes what "verified" means (see §Test
   strategies by ticket type below).
 - **Linked issues** — duplicates, blockers, related fixes that may affect the same data.
-- **Remote links / development panel** — links to the Azure DevOps work item, PR, or commits
-  (this feeds Phase 2).
+- **Development panel** — the linked Azure DevOps PR(s), branches, and commits. `getJiraIssue`
+  and `getJiraIssueRemoteIssueLinks` do **not** return this data (it lives in a separate store fed
+  by the source-control integration). Phase 2 reads it directly via the dev-status API — that is
+  the reliable path, not remote links.
 
 Before writing a single query, extract this. If a field is missing, note it and proceed with
 best-effort assumptions:
@@ -69,41 +71,68 @@ engineer to confirm before designing tests.
 
 ## Phase 2 — Understand the fix (Azure DevOps)
 
-A test that doesn't target what actually changed is weak. Find the implemented fix and read it:
+A test that doesn't target what actually changed is weak. Find the implemented fix and read it.
 
-- From Phase 1, collect the **work item ID / PR ID / commit** — check `getJiraIssueRemoteIssueLinks`
-  and comments referencing `!PR 123` / commit hashes. (Jira's "Development" panel, when the
-  engineer can see it in the browser, often has it too — but no current MCP tool exposes that
-  panel's data, so don't expect to find it through `getJiraIssueRemoteIssueLinks` alone.)
-- Inspect with the Azure DevOps MCP tools (`repo_get_pull_request_by_id`,
-  `repo_get_pull_request_changes` with `includeDiffs: true`, `wit_get_work_item`,
-  `search_commits`). Or the `az` CLI (`az repos pr show --id <id> --output json`,
-  `az repos pr diff`) if you prefer.
-- **If nothing surfaced from Jira** (remote links empty, nothing in comments), **before giving
-  up, search the `drivers` repo directly for the fix** — no MCP tool exposes Jira's Development
-  panel (linked PRs from a connected source-control app), so this is the reliable automated path:
-  1. Build the branch list to search: `{v25, v26, <the ticket's Major Version Affected value>}`,
-     de-duplicated (e.g. a ticket affecting v27 searches `v25`, `v26`, `v27`).
-  2. For each branch, call `repo_search_commits(project="drivers", repository="drivers",
-     searchText="<ticket key, e.g. DRIVERS-59445>", version="<branch>", versionType="Branch")`.
-     2–3 cheap calls, one per branch.
-  3. For any commit(s) found, resolve the owning PR(s) with
-     `repo_list_pull_requests_by_commits(commitIds=[...])`.
-  4. If this finds one or more PRs, treat that as the implemented fix and continue below
-     normally. A fix may land on more than one branch (backports) — review all of them, not just
-     the first.
-  5. This relies on commit messages referencing the Jira key (e.g. `DRIVERS-59445: ...`) — if the
-     team didn't follow that convention for this ticket, it will find nothing; fall through to
-     asking the engineer.
-- **If the ADO search above also finds nothing**, or the Azure DevOps tooling isn't set up —
-  **stop and ask the engineer, offering two explicit options:**
-  1. **Provide the PR link** (URL or ID) or paste the diff, and you'll review the fix as normal.
-  2. **Proceed without PR review** — skip Phase 2 and derive test cases from the ticket alone
-     (description, acceptance criteria, comments).
-  Never guess what changed. If the engineer chooses option 2, say clearly that coverage is
-  weaker (tests can't target the actual code paths that changed, and regression scope is
-  unknown), carry on from Phase 3 using only Phase 1 findings, and **flag in the final report**
-  that the fix was not reviewed — verdicts confirm ticket behaviour, not the implementation.
+**Fix review requires two things to be set up** (both are part of onboarding — see ONBOARDING.md
+Phase 5):
+- a **Jira classic API token** (`JIRA_API_TOKEN` / `JIRA_USER_EMAIL` env vars) — to *find* the
+  linked PR via the dev-status API, and
+- the **Azure DevOps MCP server** (backed by an ADO PAT) — to *read* the PR diff.
+
+**If neither is available, PR review cannot be done automatically.** In that case the only way to
+review the fix is for the engineer to **hand the PR link (or paste the diff) directly** — say so
+plainly rather than guessing. See the "nothing found / not set up" step below.
+
+### Step 1 — Find the linked PR(s): dev-status API (primary, definitive)
+
+This is the authoritative method — it returns exactly what the Jira "Development" panel shows in
+the browser, including back-port PRs on other branches that a branch/commit search misses. Run the
+bundled helper (it resolves the issue ID, auto-discovers the SCM app, and prints the PRs):
+
+```powershell
+pwsh .claude/skills/qa-ticket-verification/find-linked-prs.ps1 <TICKET-KEY>
+# e.g. pwsh find-linked-prs.ps1 DRIVERS-60403   → returns PR 89902 (v25) AND 89903 (v26 backport)
+```
+
+(On Windows without `pwsh`, use `powershell.exe -File .claude/skills/qa-ticket-verification/find-linked-prs.ps1 <TICKET-KEY>`.
+Add `-Json` for machine-readable output.) The script needs the Jira token env vars above; if they
+aren't set it exits with a clear message — that means onboarding is incomplete, not that there's no PR.
+
+A fix may land on more than one branch (back-ports) — **review every PR the script returns, not
+just the first.**
+
+### Step 2 — Read the fix (Azure DevOps)
+
+For each PR the script returned, inspect it with the Azure DevOps MCP tools
+(`repo_get_pull_request_by_id`, `repo_get_pull_request_changes` with `includeDiffs: true`,
+`wit_get_work_item`). Or the `az` CLI (`az repos pr show --id <id> --output json`,
+`az repos pr diff`) if you prefer.
+
+### Step 3 — Fallbacks (only if Step 1 returned nothing)
+
+If the dev-status script found no PRs (the SCM app may not have synced, or no PR is linked), try,
+in order:
+1. **A PR link in the ticket comments** — devs sometimes paste `.../pullrequest/<id>` directly.
+2. **Commit search in the `drivers` repo.** Build the branch list `{v25, v26, <the ticket's Major
+   Version Affected value>}`, de-duplicated, and for each call
+   `repo_search_commits(project="drivers", repository="drivers", searchText="<ticket key>",
+   version="<branch>", versionType="Branch")`. Resolve any commits to PRs with
+   `repo_list_pull_requests_by_commits(commitIds=[...])`. This only works if the commit message
+   references the Jira key — if the convention wasn't followed, it finds nothing.
+
+### Step 4 — Nothing found, or tooling not set up → ask the engineer
+
+If Steps 1–3 all come up empty, or the Jira token / Azure DevOps MCP isn't configured, **stop and
+ask the engineer, offering two explicit options:**
+1. **Provide the PR link** (URL or ID) or paste the diff, and you'll review the fix as normal
+   (reading the diff still needs the Azure DevOps MCP or a pasted diff).
+2. **Proceed without PR review** — skip the fix review and derive test cases from the ticket alone
+   (description, acceptance criteria, comments).
+
+Never guess what changed. If the engineer chooses option 2, say clearly that coverage is weaker
+(tests can't target the actual code paths that changed, and regression scope is unknown), carry on
+from Phase 3 using only Phase 1 findings, and **flag in the final report** that the fix was not
+reviewed — verdicts confirm ticket behaviour, not the implementation.
 
 From the diff, identify the **blast radius** for data testing:
 - Which **tables / columns / views / stored procedures** were touched
@@ -119,11 +148,12 @@ This is what your test cases must target — plus regression around it.
 three things explicitly in your response:
 1. **Comments reviewed** — the line you filled in during Phase 1. If it's missing or you're not
    sure, go back and re-call `getJiraIssue` with `fields: ["*all", "comment"]` before continuing.
-2. **PR/diff reviewed** — the specific PR ID and a one-line summary of what changed (from Phase 2).
-   **"No PR found" is only a valid entry here if Phase 2's ask-the-engineer step already ran and
-   the engineer chose option 2 (proceed without fix review).** It is never a way to skip that ask
-   — if you reach this gate with no PR and haven't asked the engineer yet, stop and go back to
-   Phase 2 first.
+2. **PR/diff reviewed** — the specific PR ID(s) and a one-line summary of what changed (from
+   Phase 2). List **all** PRs the dev-status script returned (back-ports included), not just one.
+   **"No PR found" is only a valid entry here if Phase 2's Steps 1–3 all came up empty AND the
+   ask-the-engineer step (Step 4) already ran and the engineer chose option 2 (proceed without fix
+   review).** It is never a way to skip that ask — if you reach this gate with no PR and haven't
+   run the dev-status script (Step 1) and asked the engineer (Step 4), stop and go back to Phase 2.
 3. **Description/acceptance criteria** — restated in your own words, not just re-read silently.
 
 "No comments on this ticket" is a fine answer for #1 if `getJiraIssue` genuinely returned zero
@@ -408,9 +438,12 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 
 **Source repo for PR discovery (Phase 2):** all driver source lives in a single Azure DevOps
 repo — org `cdatasoftware`, project `drivers`, repository `drivers` — with long-lived release
-branches named `v<major>` (e.g. `v25` is the current default, `v26` the next). Commit messages
-are expected to reference the Jira key (e.g. `DRIVERS-59445: ...`); the automated PR search in
-Phase 2 depends on that convention holding.
+branches named `v<major>` (e.g. `v25` is the current default, `v26` the next). The **primary** PR
+finder is the dev-status API (`find-linked-prs.ps1`), which reads the Jira Development panel and
+needs no naming convention. The commit-search **fallback** relies on commit messages referencing
+the Jira key (e.g. `DRIVERS-59445: ...`); that convention isn't always followed, which is exactly
+why the dev-status API is preferred. The Jira↔ADO link is provided by the "Git Integration for
+Jira by GitKraken" app (dev-status `applicationType = oAuth-com.xiplink.jira.git.jira_git_plugin`).
 
 **Driver short names** (for `load_driver` / `connect`): `acumatica`, `bigquery`, `box`,
 `dynamics365`, `dynamicscrm`, `excel`, `googledrive`, `googlesheets`, `hubspot`, `jira`, `marketo`,
@@ -445,8 +478,8 @@ This project's `.claude/settings.json` allowlists every read/list/search tool on
 (`atlassian`), Azure DevOps (`azure-devops`), and `jdbc-platform` (`execute_query`,
 `execute_prepared`, `get_metadata`, `compare_queries`, `assert_query`, `record_check`,
 `export_results`, `list_sessions`, `get_usage_stats`, `get_test_report`), plus read-only shell
-commands. Use these without asking — just narrate what you're reading as you go through Phases
-1–4. This does not loosen the write boundary: `execute_update`, `load_driver`, `connect`/
+commands and the read-only `find-linked-prs.ps1` PR-discovery helper. Use these without asking —
+just narrate what you're reading as you go through Phases 1–4. This does not loosen the write boundary: `execute_update`, `load_driver`, `connect`/
 `disconnect`, and any Jira/ADO create/update/comment/PR tool still prompt for confirmation, and
 posting to Jira/ADO always requires the engineer's explicit go-ahead regardless of what the
 permission system allows (see Phase 5 and the principle below).

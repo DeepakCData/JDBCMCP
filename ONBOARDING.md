@@ -77,10 +77,14 @@ Run each check and record the result. Translate the command to the user's actual
 | 8 | Jira (Atlassian) MCP registered? | same `claude mcp list` output | An `atlassian` (or equivalent Jira) server, or a `claude.ai Atlassian` connector, present |
 | 9 | Azure DevOps MCP registered? | same `claude mcp list` output | An `azure-devops` server present |
 | 10 | Node.js / `npx` (only needed for check 9's fix) | `npx --version` | Reports a version — required by the Azure DevOps MCP package |
+| 11 | Jira API token for PR discovery | check `JIRA_API_TOKEN` and `JIRA_USER_EMAIL` are set (e.g. `[bool]$env:JIRA_API_TOKEN`) | Both present |
 
 Checks 8–9 are the **companion servers the QA skill depends on** — Jira to read the ticket,
-Azure DevOps to read the implemented fix. If either is missing, you will offer to register it in
-Phase 5. The JDBC server itself works without them.
+Azure DevOps to read the implemented fix. Check 11 is the **Jira classic API token** that powers
+definitive linked-PR discovery (the dev-status API — see Phase 5). If any of these is missing, you
+will offer to set it up in Phase 5. The JDBC server itself works without them, but **automated PR
+review needs both the Jira token (to find the PR) and the Azure DevOps MCP (to read it)** — without
+those, the QA skill can only review a fix if the engineer hands the PR link or diff directly.
 
 After running all of these, produce a short status table for the user, e.g.:
 
@@ -93,6 +97,7 @@ MCP registered   [missing] not yet
 Jira MCP         [missing] not registered — QA skill can't read tickets
 Azure DevOps MCP [missing] not registered — QA skill can't read PR diffs
 Node.js / npx    [ok] found (v20.11.0) — needed if registering Azure DevOps
+Jira API token   [missing] not set — QA skill can't auto-find linked PRs
 Repo path        C:\Users\<them>\...\jdbc-mcp-server
 ```
 
@@ -175,12 +180,17 @@ works here.
 
 ## Phase 5 — Companion MCP servers + things only the user can provide
 
-The QA skill needs two more MCP servers besides `jdbc-platform`: **Jira (Atlassian)** to read
-tickets and **Azure DevOps** to read the implemented fix. **If the preflight (checks 8–9) found
-either missing, proactively prompt the user here** — explain what each enables, ask if they want
-it registered, and only run the command after a clear "yes". If the user does QA tickets at all,
-recommend both. If they decline, note the limitation (the skill will fall back to asking for
-ticket details / PR links manually) and move on.
+The QA skill needs, besides `jdbc-platform`: **Jira (Atlassian) MCP** to read tickets, **Azure
+DevOps MCP** to read the implemented fix, and a **Jira classic API token** to *find* the linked PR.
+**If the preflight (checks 8–9, 11) found any missing, proactively prompt the user here** — explain
+what each enables, ask if they want it set up, and only run the command after a clear "yes". If the
+user does QA tickets at all, recommend all three.
+
+**Requirement for automated PR review:** finding *and* reviewing a fix needs **both** the Jira API
+token (check 11 — to locate the linked PR) **and** the Azure DevOps MCP (checks 9–10 — to read the
+diff). If either is absent, tell the user plainly that **PR review can only be done if they hand
+the PR link or paste the diff directly** — the skill will not guess what changed. Note the
+limitation and move on if they decline.
 
 **Both commands below are verified working (confirmed against a live, connected registration) —
 run them exactly as written. Do not improvise alternate flags, package names, or URLs, and do not
@@ -227,6 +237,39 @@ manually (or proceed without fix review) when it reaches that phase.
   missing scopes — regenerate it, then `claude mcp remove azure-devops -s user` and re-add.
 - `npx --version` missing — Node.js isn't installed; point the user to https://nodejs.org, don't
   try to install it silently.
+
+### Jira API token — enables definitive linked-PR discovery (Phase 2 of the skill)
+The skill's Phase 2 finds the PR(s) linked to a ticket by calling Jira's dev-status API (the same
+data the Jira "Development" panel shows in the browser). This is far more reliable than scraping
+comments or guessing branch names — it even catches back-port PRs on other release branches. It is
+driven by the bundled helper `.claude/skills/qa-ticket-verification/find-linked-prs.ps1`.
+
+This needs a **classic Atlassian API token** used with HTTP Basic auth. **OAuth 2.0 / scoped
+tokens do NOT work** with the dev-status endpoint — don't create those.
+
+1. Have the user generate a token at https://id.atlassian.com/manage-profile/security/api-tokens
+   (any name; it needs no special scopes — a plain classic token works). **Read-only use only** —
+   this token must never be used for Jira writes.
+2. Store it, plus the token owner's email, in the repo's **`.claude/settings.local.json`** under an
+   `env` block (this file is git-ignored, so the secret is not committed):
+   ```json
+   {
+     "env": {
+       "JIRA_API_TOKEN": "<their-classic-token>",
+       "JIRA_USER_EMAIL": "<their-atlassian-email>",
+       "JIRA_BASE_URL": "https://cdatajira.atlassian.net"
+     }
+   }
+   ```
+   `JIRA_BASE_URL` is optional (defaults to `https://cdatajira.atlassian.net`); set it for a
+   different Jira site. Never write a placeholder token — get the real one or skip this step.
+3. Verify end-to-end against a ticket you know has a PR:
+   ```powershell
+   pwsh .claude/skills/qa-ticket-verification/find-linked-prs.ps1 <TICKET-KEY>
+   ```
+   It should print the linked PR(s) with id, status, branch, and URL. The script auto-discovers the
+   SCM app, so it works for other Jira/ADO setups too. If it errors that the env vars aren't set,
+   the settings weren't picked up — restart Claude Code so the new `env` block loads.
 
 ### CData driver JARs (required to connect to CData sources — cannot be automated)
 The server includes **no** driver JARs — they are licensed separately. Ask the user:
@@ -316,5 +359,9 @@ and what the user can ask you to do next.
 - **"Could not load driver"** — wrong JAR path, or the JAR doesn't match the Java version.
 - **Proxy/capture not working** — check `mitmdump --version`; if port 8889 is busy set
   `JDBC_MCP_MITM_PORT`; the server still works via driver-native logging fallback.
-- **QA skill can't find the ADO PR** — `AZURE_DEVOPS_EXT_PAT` missing/expired, or the Jira ticket
-  has no remote link to the PR.
+- **QA skill can't find the linked PR** — run `find-linked-prs.ps1 <TICKET-KEY>` directly to see
+  the failure. Common causes: `JIRA_API_TOKEN`/`JIRA_USER_EMAIL` not set or not loaded (restart
+  Claude Code after editing `.claude/settings.local.json`); an OAuth/scoped token was used instead
+  of a classic API token (the dev-status endpoint rejects those); or the ticket genuinely has no
+  linked PR yet. To then *read* a found PR you still need the Azure DevOps MCP — if its PAT is
+  missing/expired, `claude mcp list` shows `! Needs authentication`.

@@ -43,7 +43,10 @@ Follow these strictly while running the setup:
    `.\mvnw.cmd`, forward slashes, etc.).
 5. **Never invent credentials or secrets.** API tokens, PATs, passwords, connection strings,
    driver license paths — you cannot detect or guess these. Ask the user to provide them, and tell
-   them exactly what's needed and where to get it.
+   them exactly what's needed and where to get it. For the QA skill's Jira/ADO credentials, do this
+   **up front** using the ready-made ask in the "First — collect the org credentials" section
+   below (the org endpoints are fixed and pre-filled). When the user hands you a token, **you**
+   store it in the safe git-ignored place — don't make them edit files.
 6. **Report, then proceed.** After the preflight, show the user a status summary (present / missing
    / needs action) before doing anything. Let them decide the order.
 7. **Reads don't need permission, writes do.** This repo ships a checked-in
@@ -58,6 +61,49 @@ Follow these strictly while running the setup:
    these). If a user's registration uses a different name, the permission rules won't match and
    they'll see prompts for reads too — tell them to either re-register under the standard name or
    add matching `mcp__<their-server-name>__*` rules to their own `.claude/settings.local.json`.
+
+---
+
+## First — collect the org credentials (ask the user right now)
+
+Everyone who runs this server is inside the **same CData org**, so the endpoints are known ahead of
+time — you only need three things from the user. **Ask for all three at the very start**, before
+the preflight, and paste the exact links so they can generate the tokens in parallel while you run
+Phase 0. Present it as a single message, roughly:
+
+> To wire up the QA skill I need three things from you (we all share the same Jira + Azure DevOps
+> org, so I've pre-filled everything else):
+>
+> 1. **Your CData Jira email** — the address you sign in to Jira with (e.g. `you@cdata.com`).
+> 2. **A Jira API token** — create a *classic* token here:
+>    https://id.atlassian.com/manage-profile/security/api-tokens → "Create API token", any name,
+>    no scopes needed. (Used read-only, for finding the PR linked to a ticket.)
+> 3. **An Azure DevOps PAT** — create one here:
+>    https://dev.azure.com/cdatasoftware/_usersSettings/tokens → "New Token", scopes **Code (Read)**
+>    and **Work Items (Read)**. (Used read-only, for reading the PR diff.)
+>
+> Paste all three back to me and I'll store them in the safe, git-ignored place myself — you won't
+> need to edit any file.
+
+Fixed org constants (do not ask the user for these — they're the same for everyone):
+
+| Thing | Value |
+|---|---|
+| Jira site (`JIRA_BASE_URL`) | `https://cdatajira.atlassian.net` |
+| Azure DevOps org | `cdatasoftware` |
+| Jira token page | https://id.atlassian.com/manage-profile/security/api-tokens |
+| ADO PAT page | https://dev.azure.com/cdatasoftware/_usersSettings/tokens |
+
+**What you do with each once the user pastes them** (mechanics detailed in Phase 5):
+- **Jira email + token** → write into `.claude/settings.local.json` `env` block as `JIRA_USER_EMAIL`
+  and `JIRA_API_TOKEN` (plus `JIRA_BASE_URL` = the site above). You write the file; never make the
+  user hand-edit JSON.
+- **ADO PAT** → used in the `claude mcp add azure-devops … AZURE_DEVOPS_EXT_PAT=<PAT> … cdatasoftware …`
+  registration command.
+
+If the preflight (Phase 0) finds any of these already configured, say so and **don't re-ask for
+that one** — only collect what's actually missing. A classic Jira API token can serve both the
+dev-status PR lookup and (if needed) an API-token-based Jira MCP, so one token covers both.
 
 ---
 
@@ -210,18 +256,18 @@ server (HTTP transport, OAuth in the browser — no API token needed):
 claude mcp add --transport http atlassian https://mcp.atlassian.com/v1/mcp
 ```
 After restarting Claude Code, the user completes sign-in via the `/mcp` command. If their
-organization blocks the remote server, the alternative is an API-token-based Jira MCP server —
-ask for their Atlassian site URL, email, and an API token
-(from https://id.atlassian.com/manage-profile/security/api-tokens). Never write a placeholder
-token — get the real one or skip.
+organization blocks the remote server, the alternative is an API-token-based Jira MCP server — the
+site is fixed (`https://cdatajira.atlassian.net`) and you already collected the email + classic
+token up front, so reuse those (the same classic token serves both this MCP and the dev-status PR
+lookup). Never write a placeholder token — get the real one or skip.
 
 ### Azure DevOps MCP server — lets the QA skill read the fix/PR diff (Phase 2 of the skill)
-If no `azure-devops` server was found, ask the user for their **ADO organization name** and a
-**Personal Access Token** (generate at `https://dev.azure.com/<org>/_usersSettings/tokens`, with
-at least Code: Read and Work Items: Read scopes). Requires Node.js (`npx`) — check #10 in Phase 0.
-Then run exactly:
+If no `azure-devops` server was found, use the **PAT the user gave you up front** (see "First —
+collect the org credentials"; generated at https://dev.azure.com/cdatasoftware/_usersSettings/tokens
+with Code: Read and Work Items: Read scopes). The org is fixed — **`cdatasoftware`** — so don't ask
+for it. Requires Node.js (`npx`) — check #10 in Phase 0. Then run exactly:
 ```powershell
-claude mcp add azure-devops -e AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp <their-org> -a env
+claude mcp add azure-devops -e AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp cdatasoftware -a env
 ```
 The `-a env` flag tells the package to read the PAT from `AZURE_DEVOPS_EXT_PAT` non-interactively
 — don't substitute `-a azcli` or `-a interactive`, they require a signed-in `az` CLI or a TTY
@@ -256,11 +302,12 @@ driven by the bundled helper `.claude/skills/qa-ticket-verification/find-linked-
 This needs a **classic Atlassian API token** used with HTTP Basic auth. **OAuth 2.0 / scoped
 tokens do NOT work** with the dev-status endpoint — don't create those.
 
-1. Ask the user to generate a token at https://id.atlassian.com/manage-profile/security/api-tokens
-   (any name; it needs no special scopes — a plain classic token works) and **paste it to you in
-   chat, along with their Atlassian email.** Tell them plainly: *"Paste me the token and I'll put
-   it in the safe, git-ignored place myself — you don't need to edit any file."* This token is for
-   **read-only use** (dev-status lookups); it must never be used for Jira writes.
+1. Use the **token + email the user gave you up front** (see "First — collect the org
+   credentials"). If you somehow reached here without them, ask now: generate a *classic* token at
+   https://id.atlassian.com/manage-profile/security/api-tokens (any name, no scopes) and paste it
+   with the Atlassian email. Tell them plainly: *"Paste me the token and I'll put it in the safe,
+   git-ignored place myself — you don't need to edit any file."* This token is for **read-only
+   use** (dev-status lookups); it must never be used for Jira writes.
 2. **You write it** — do not make the user edit JSON by hand. Put the token and email into the
    repo's **`.claude/settings.local.json`** under an `env` block. That file is the safe, expected
    home for it: it is git-ignored, so the secret is never committed. The block looks like:

@@ -1,7 +1,7 @@
 package com.cdata.mcp.config;
 
 /**
- * Central, externally-tunable limits for the JDBC MCP server.
+ * Central, externally-tunable limits for the JDBC Platform MCP server.
  *
  * Every value can be overridden (in precedence order) by a JVM system property
  * or an environment variable, otherwise a safe default is used. This keeps the

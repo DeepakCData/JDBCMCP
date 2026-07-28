@@ -1,7 +1,7 @@
-# JDBC MCP Server — Agent Onboarding & Setup Guide
+# JDBC Platform MCP Server — Agent Onboarding & Setup Guide
 
 > **This document is addressed to you, the Claude agent.** A user has handed you this file because
-> they want the JDBC MCP server working on their machine. Your job is to **drive the setup
+> they want the `jdbc-platform` MCP server working on their machine. Your job is to **drive the setup
 > end-to-end**: detect what's already present, figure out what's missing, generate the exact
 > commands for *their* OS and paths, ask permission, and only then make changes. Do not assume the
 > environment matches the author's — verify everything.
@@ -114,7 +114,7 @@ Run each check and record the result. Translate the command to the user's actual
 | # | What to check | Command (Windows / PowerShell) | Pass condition |
 |---|---|---|---|
 | 1 | Java JDK 17+ | `java -version` | Reports version 17 or higher |
-| 2 | The built server JAR | check `target/jdbc-mcp-server-1.0-SNAPSHOT.jar` exists | File present |
+| 2 | The built server JAR | check `target/jdbc-platform-1.0-SNAPSHOT.jar` exists | File present |
 | 3 | mitmproxy | `mitmdump --version` | Reports a version |
 | 4 | Python (only if mitmproxy missing) | `python --version` | Present, for `pip install` |
 | 5 | Current repo absolute path | `Get-Location` (or `pwd`) | Note it — needed for MCP registration |
@@ -166,7 +166,7 @@ Command to propose (ask permission first):
 ```
 (macOS/Linux: `./mvnw -q clean package`)
 
-Produces `target/jdbc-mcp-server-1.0-SNAPSHOT.jar`. If the build fails, the usual cause is
+Produces `target/jdbc-platform-1.0-SNAPSHOT.jar`. If the build fails, the usual cause is
 `JAVA_HOME` not pointing at a JDK 17+. Surface the actual error to the user — don't guess.
 
 ---
@@ -188,7 +188,7 @@ tell them, don't try to install Python silently.
 
 ## Phase 3 — Register the MCP server
 
-**This repo ships a project-scope `.mcp.json`** (launches `java -jar target/jdbc-mcp-server-1.0-SNAPSHOT.jar`
+**This repo ships a project-scope `.mcp.json`** (launches `java -jar target/jdbc-platform-1.0-SNAPSHOT.jar`
 relative to the repo root). If the user opened this folder in Claude Code and approved the
 `jdbc-platform` server when prompted, registration is already done — verify with `claude mcp list`
 and skip to Phase 6. It only works after Phase 1's build has produced the JAR.
@@ -204,7 +204,7 @@ Decide scope **with the user**:
 For user scope, generate the command with the **real absolute path** you detected in Phase 0,
 ask permission, then run it:
 ```powershell
-claude mcp add jdbc-platform --scope user -- java -jar "<ABSOLUTE_PATH_TO_REPO>\target\jdbc-mcp-server-1.0-SNAPSHOT.jar"
+claude mcp add jdbc-platform --scope user -- java -jar "<ABSOLUTE_PATH_TO_REPO>\target\jdbc-platform-1.0-SNAPSHOT.jar"
 ```
 
 Substitute `<ABSOLUTE_PATH_TO_REPO>` with the path from Phase 0, check #5. On Windows use

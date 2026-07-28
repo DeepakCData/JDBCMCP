@@ -17,7 +17,7 @@ public class Main {
         StdioServerTransportProvider transport = new StdioServerTransportProvider(jsonMapper);
 
         McpSyncServer server = McpServer.sync(transport)
-                .serverInfo("jdbc-mcp-server", "1.0.0")
+                .serverInfo("jdbc-platform", "1.0.0")
                 .toolCall(LoadDriverTool.tool(),    LoadDriverTool::handle)
                 .toolCall(ConnectTool.tool(),       ConnectTool::handle)
                 .toolCall(ExecuteQueryTool.tool(),  ExecuteQueryTool::handle)

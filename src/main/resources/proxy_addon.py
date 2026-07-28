@@ -1,5 +1,5 @@
 """
-JDBC MCP Server — mitmproxy addon (auto-extracted from JAR on first HTTP-driver connect).
+JDBC Platform MCP Server — mitmproxy addon (auto-extracted from JAR on first HTTP-driver connect).
 Logs every intercepted HTTP request + response as a JSON-lines entry.
 
 Log path is resolved from the JDBC_MCP_MITM_LOG_PATH env var, falling back to

@@ -1,4 +1,4 @@
-# JDBC MCP Server
+# JDBC Platform MCP Server
 
 A local MCP server (Java 17, stdio transport) that gives Claude real JDBC access for QA work:
 open live connections to databases and CData connectors (SAP ERP, Salesforce, SharePoint,
@@ -47,7 +47,7 @@ CData driver-native logging automatically.
 #    a) Project scope (zero commands): this repo ships .mcp.json, so just open the folder
 #       in Claude Code and approve the "jdbc-platform" server when prompted.
 #    b) User scope (works from any directory):
-claude mcp add jdbc-platform --scope user -- java -jar "<ABSOLUTE_PATH_TO_THIS_REPO>\target\jdbc-mcp-server-1.0-SNAPSHOT.jar"
+claude mcp add jdbc-platform --scope user -- java -jar "<ABSOLUTE_PATH_TO_THIS_REPO>\target\jdbc-platform-1.0-SNAPSHOT.jar"
 
 # 3. Restart Claude Code, then ask Claude to call list_sessions to confirm it's live.
 ```
@@ -142,7 +142,7 @@ Share via git (a `.gitignore` is included), or zip it — **exclude** `target/`,
 and secrets):
 
 ```powershell
-git init; git add .; git commit -m "JDBC MCP server"    # .gitignore handles the exclusions
+git init; git add .; git commit -m "JDBC Platform MCP server"    # .gitignore handles the exclusions
 ```
 
 Recipients then follow the Quick start above.

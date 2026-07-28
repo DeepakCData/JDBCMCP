@@ -1,4 +1,4 @@
-# JDBC MCP Server — Claude Instructions
+# JDBC Platform MCP Server — Claude Instructions
 
 **New machine / server not yet running?** Follow ONBOARDING.md — it is the agent-driven setup
 runbook (preflight checks, build, mitmproxy, MCP registration). README.md has the human-facing

@@ -433,6 +433,13 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
    only `get_metadata` / `data_type` settles it.
 8. **File driver proxied against intent** — check `proxy_reason` (`applied:file_remote_uri` vs
    `skipped:file_local_path`); override with `use_proxy` if the URI heuristic guessed wrong.
+9. **Always verify errors at the CData layer, not the native database layer.** CData drivers
+   transform backend errors before surfacing them: Oracle `SQLState=72000` becomes `HY000`,
+   messages get prefixed (e.g. `STMT ORA-01438`), and exception types may change
+   (`UndeclaredThrowableException` instead of `SQLException`). When asserting on errors —
+   SQLState, message text, exception class — assert on what the CData driver actually returns,
+   not what the underlying database or the JDBC spec says should happen. If the CData-surfaced
+   error is wrong (wrong SQLState, mangled message, wrong exception type), that itself is a bug.
 
 ---
 

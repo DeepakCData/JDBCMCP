@@ -1,6 +1,6 @@
 ---
 name: qa-ticket-verification
-description: End-to-end QA for a Jira ticket against a database. Use when a QA engineer asks to test, verify, validate, QA, or reproduce a Jira ticket or its fix — e.g. "QA PROJ-123", "verify this ticket", "test the fix for ABC-45", "check the acceptance criteria against the data". Also use for operation-level driver testing WITHOUT a ticket — "run select tests on this table", "test inserts/updates/deletes (CUD)", "test batch operations", "test the stored procedures" — the bundled checklists/ define exactly what to verify when instructions are vague. Investigates the full ticket context (description, comments, acceptance criteria, attachments, linked items) AND the actual implemented fix in Azure DevOps (linked PR/commit/work item diff), derives test cases from both, then verifies them against a JDBC-accessible system using the jdbc-platform MCP tools — CData connectors (SAP ERP, SharePoint, Salesforce, ServiceNow, etc.) or native databases (PostgreSQL, SQL Server, Oracle, Snowflake, MySQL).
+description: End-to-end QA for a Jira ticket against a database. Use when a QA engineer asks to test, verify, validate, QA, or reproduce a Jira ticket or its fix — e.g. "QA PROJ-123", "verify this ticket", "test the fix for ABC-45", "check the acceptance criteria against the data". Also use for operation-level driver testing WITHOUT a ticket — "run select tests on this table", "test inserts/updates/deletes (CUD)", "test batch operations", "test the stored procedures" — the bundled checklists/ provide structured baseline coverage that supplements any specific instructions; user instructions always take priority and the checklist fills gaps. Investigates the full ticket context (description, comments, acceptance criteria, attachments, linked items) AND the actual implemented fix in Azure DevOps (linked PR/commit/work item diff), derives test cases from both, then verifies them against a JDBC-accessible system using the jdbc-platform MCP tools — CData connectors (SAP ERP, SharePoint, Salesforce, ServiceNow, etc.) or native databases (PostgreSQL, SQL Server, Oracle, Snowflake, MySQL).
 ---
 
 # QA Ticket Verification
@@ -357,8 +357,10 @@ assertions, cleanup) that every checklist assumes.
 
 The same applies **inside a ticket run**: when Phase 1–2 establish that a fix touches an
 operation (e.g. "the fix changes INSERT handling") but the ticket gives no concrete test cases,
-the corresponding checklist is the default coverage — derive ticket-specific tests on top of it,
-and trim tiers that are irrelevant to the diff (say which and why).
+use the corresponding checklist as a **baseline** — derive ticket-specific tests first (from the
+diff and acceptance criteria), then use the checklist to fill gaps and ensure nothing standard was
+missed. Trim checklist tiers that are clearly irrelevant to the diff and say why. The checklist
+is a floor, not a ceiling — if the ticket or engineer implies something beyond it, test that too.
 
 ---
 

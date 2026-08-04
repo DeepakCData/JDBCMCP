@@ -1,8 +1,10 @@
 # SELECT Testing Checklist
 
 Use when asked to "run select tests", "test reads/queries/filters" on a table with no further
-detail. Shared rules (session setup, metadata-first, anchor rows, three-layer verification,
-CData-layer errors, reporting) are in [README.md](README.md) — apply them throughout.
+detail. This checklist is a **baseline** — always execute any specific instructions the engineer
+gave first, then use these tiers to fill gaps and ensure standard coverage. If the engineer
+specifies tests not listed here, run them. Shared rules (session setup, metadata-first, anchor
+rows, three-layer verification, CData-layer errors, reporting) are in [README.md](README.md).
 
 Connect with `read_only: true`. Prefer `assert_query` (with `criterion`) over bare
 `execute_query` so every check lands in the report.
@@ -91,9 +93,11 @@ Pick columns by type from metadata; use anchor-row values so expectations are kn
 
 ## Verdict guidance
 
-- **PASS**: all executed tiers pass with reconciled counts.
+- **PASS**: all executed checks pass with reconciled counts — both checklist tiers and any
+  engineer-specified tests.
 - **FAIL**: any wrong value, wrong/0-when-expected row count, exception on valid SQL, wrong JDBC
   type, or non-equivalent SQL rewrite.
 - **NEEDS-INVESTIGATION**: correct rows but suspicious trace (client-side filtering, page-boundary
   counts, heavy N+1) — report with evidence.
-- Skipped tiers are reported as skipped, never silently omitted.
+- Skipped checklist tiers are reported as skipped, never silently omitted. Engineer-specified
+  tests are never skipped.

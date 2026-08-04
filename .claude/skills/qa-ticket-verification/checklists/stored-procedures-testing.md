@@ -1,7 +1,9 @@
 # Stored Procedure Testing Checklist
 
-Use when asked to "test the stored procedures / procs / EXEC" with no further detail. Shared
-rules are in [README.md](README.md).
+Use when asked to "test the stored procedures / procs / EXEC" with no further detail. This
+checklist is a **baseline** — always execute any specific instructions the engineer gave first,
+then use these tiers to fill gaps. If the engineer specifies proc scenarios not listed here, run
+them. Shared rules are in [README.md](README.md).
 
 Two very different worlds share this checklist — identify which you're in first:
 

@@ -1,7 +1,9 @@
 # DELETE Testing Checklist
 
-Use when asked to "test deletes" on a table with no further detail. Shared rules are in
-[README.md](README.md). Connect with `read_only: false`.
+Use when asked to "test deletes" on a table with no further detail. This checklist is a
+**baseline** — always execute any specific instructions the engineer gave first, then use these
+tiers to fill gaps. If the engineer specifies delete scenarios not listed here, run them. Shared
+rules are in [README.md](README.md). Connect with `read_only: false`.
 
 **Hard rules:**
 - Delete only rows **you created this session** (marker rows from

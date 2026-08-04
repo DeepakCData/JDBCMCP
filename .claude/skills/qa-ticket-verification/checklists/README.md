@@ -1,8 +1,27 @@
 # Operation Testing Checklists
 
-These files define **exactly what to test when the instruction is vague or partial** — e.g.
+## How checklists relate to user instructions
+
+**Checklists are a floor, not a ceiling.**
+
+User instructions always come first. The checklist is what you run in addition — to fill gaps,
+ensure nothing obvious is missed, and give consistent baseline coverage when instructions don't
+spell everything out. It is never a boundary on what can be tested.
+
+- If the user says "test selects on this table", run the select checklist **plus** anything the
+  user's context implies (ticket behaviour, known edge cases, anything they mention).
+- If the user says "focus only on LIKE pushdown", do that — and use the checklist to ensure you
+  also cover the surrounding core that makes the result trustworthy.
+- If the user gives detailed test cases, execute those first, then use the checklist to fill
+  any remaining gaps. Never substitute the checklist for instruction-driven tests.
+- Never say "that's outside the checklist" as a reason not to test something.
+
+---
+
+## When to load a checklist
+
+Load the matching checklist when the instruction is vague or partial — e.g.
 "do select tests on this table", "test inserts", "check batch ops", "verify the stored procs".
-Instead of guessing, load the matching checklist and execute it top to bottom.
 
 | Instruction sounds like | Load |
 |---|---|
@@ -15,7 +34,8 @@ Instead of guessing, load the matching checklist and execute it top to bottom.
 | "stored proc tests", "test the procedures", "EXEC tests" | [stored-procedures-testing.md](stored-procedures-testing.md) |
 
 A ticket-driven QA run (the main SKILL.md phases) can also pull these in: when the ticket says
-"the fix affects INSERT" but gives no test cases, the insert checklist is the default coverage.
+"the fix affects INSERT" but gives no explicit test cases, the insert checklist is the baseline
+coverage — derive ticket-specific tests on top of it, and trim tiers that are irrelevant to the diff.
 
 ---
 

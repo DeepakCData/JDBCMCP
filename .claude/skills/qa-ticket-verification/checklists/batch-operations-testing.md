@@ -1,7 +1,9 @@
 # Batch Operations Testing Checklist
 
-Use when asked to "test batch operations", "bulk insert", "executeBatch", or "BatchSize". Shared
-rules are in [README.md](README.md). Connect with `read_only: false`.
+Use when asked to "test batch operations", "bulk insert", "executeBatch", or "BatchSize". This
+checklist is a **baseline** — always execute any specific instructions the engineer gave first,
+then use these tiers to fill gaps. If the engineer specifies batch scenarios not listed here, run
+them. Shared rules are in [README.md](README.md). Connect with `read_only: false`.
 
 Batch tests run through **`execute_java`** — `execute_prepared` is single-statement. All rows
 carry the session marker for cleanup. Everything from

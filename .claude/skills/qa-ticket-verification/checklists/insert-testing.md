@@ -1,9 +1,11 @@
 # INSERT Testing Checklist
 
-Use when asked to "test inserts/creates/writes" on a table with no further detail. Shared rules
-are in [README.md](README.md). This checklist is also the entry point of a full "CUD test" run —
-the rows it creates feed [update-testing.md](update-testing.md) and
-[delete-testing.md](delete-testing.md).
+Use when asked to "test inserts/creates/writes" on a table with no further detail. This checklist
+is a **baseline** — always execute any specific instructions the engineer gave first, then use
+these tiers to fill gaps. If the engineer specifies insert scenarios not listed here, run them.
+This checklist is also the entry point of a full "CUD test" run — the rows it creates feed
+[update-testing.md](update-testing.md) and [delete-testing.md](delete-testing.md). Shared rules
+are in [README.md](README.md).
 
 **Connect with `read_only: false`** (state this before connecting; confirm with the engineer on
 shared data). All inserted rows carry a session marker in some text column —

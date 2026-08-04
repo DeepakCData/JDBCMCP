@@ -1,6 +1,6 @@
 ---
 name: qa-ticket-verification
-description: End-to-end QA for a Jira ticket against a database. Use when a QA engineer asks to test, verify, validate, QA, or reproduce a Jira ticket or its fix — e.g. "QA PROJ-123", "verify this ticket", "test the fix for ABC-45", "check the acceptance criteria against the data". Investigates the full ticket context (description, comments, acceptance criteria, attachments, linked items) AND the actual implemented fix in Azure DevOps (linked PR/commit/work item diff), derives test cases from both, then verifies them against a JDBC-accessible system using the jdbc-platform MCP tools — CData connectors (SAP ERP, SharePoint, Salesforce, ServiceNow, etc.) or native databases (PostgreSQL, SQL Server, Oracle, Snowflake, MySQL).
+description: End-to-end QA for a Jira ticket against a database. Use when a QA engineer asks to test, verify, validate, QA, or reproduce a Jira ticket or its fix — e.g. "QA PROJ-123", "verify this ticket", "test the fix for ABC-45", "check the acceptance criteria against the data". Also use for operation-level driver testing WITHOUT a ticket — "run select tests on this table", "test inserts/updates/deletes (CUD)", "test batch operations", "test the stored procedures" — the bundled checklists/ define exactly what to verify when instructions are vague. Investigates the full ticket context (description, comments, acceptance criteria, attachments, linked items) AND the actual implemented fix in Azure DevOps (linked PR/commit/work item diff), derives test cases from both, then verifies them against a JDBC-accessible system using the jdbc-platform MCP tools — CData connectors (SAP ERP, SharePoint, Salesforce, ServiceNow, etc.) or native databases (PostgreSQL, SQL Server, Oracle, Snowflake, MySQL).
 ---
 
 # QA Ticket Verification
@@ -331,6 +331,34 @@ a driver crash needing its own ticket.
 
 - `disconnect` when done (verify `"status": "closed"`). Use `list_sessions` to find and close any
   orphaned sessions. Always disconnect even if earlier steps failed.
+
+---
+
+## Operation checklists — when instructions are vague, partial, or there is no ticket
+
+When the ask is **operation-level rather than ticket-level** — "do select tests on this table",
+"test inserts", "check batch operations", "verify the stored procs" — do **not** guess or improvise
+coverage. Read the matching checklist under
+[`checklists/`](checklists/) and execute it:
+
+| Ask | Checklist |
+|---|---|
+| SELECT / read / query / filter / aggregate tests | `checklists/select-testing.md` |
+| INSERT / create tests | `checklists/insert-testing.md` |
+| UPDATE tests | `checklists/update-testing.md` |
+| DELETE tests | `checklists/delete-testing.md` |
+| "CUD" / "write" / "DML" tests | insert → update → delete checklists, in that order |
+| Batch / bulk / executeBatch / BatchSize tests | `checklists/batch-operations-testing.md` |
+| Stored procedure / EXEC tests | `checklists/stored-procedures-testing.md` |
+
+Start with [`checklists/README.md`](checklists/README.md) — it holds the shared rules (session
+discipline, metadata-first, fixture/marker rows, three-layer verification, CData-layer error
+assertions, cleanup) that every checklist assumes.
+
+The same applies **inside a ticket run**: when Phase 1–2 establish that a fix touches an
+operation (e.g. "the fix changes INSERT handling") but the ticket gives no concrete test cases,
+the corresponding checklist is the default coverage — derive ticket-specific tests on top of it,
+and trim tiers that are irrelevant to the diff (say which and why).
 
 ---
 

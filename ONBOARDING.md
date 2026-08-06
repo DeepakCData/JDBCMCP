@@ -243,11 +243,9 @@ diff). If either is absent, tell the user plainly that **PR review can only be d
 the PR link or paste the diff directly** — the skill will not guess what changed. Note the
 limitation and move on if they decline.
 
-**Both commands below are verified working (confirmed against a live, connected registration) —
-run them exactly as written. Do not improvise alternate flags, package names, or URLs, and do not
-try to "figure out" a different setup path first; that only burns time on a problem that's already
-solved.** If a verified command still fails, the fix is almost always the PAT/scopes or a stale
-`npx` cache — see Troubleshooting below — not a different command shape.
+**Both commands below are verified working. Do not improvise alternate flags, package names, or
+URLs.** If a command still fails, the fix is almost always the PAT/scopes or a stale `npx` cache
+— see Troubleshooting below — not a different command shape.
 
 ### Jira (Atlassian) MCP server — lets the QA skill read tickets (Phase 1 of the skill)
 If no Jira/Atlassian server or connector was found, register Atlassian's official remote MCP
@@ -265,13 +263,22 @@ lookup). Never write a placeholder token — get the real one or skip.
 If no `azure-devops` server was found, use the **PAT the user gave you up front** (see "First —
 collect the org credentials"; generated at https://dev.azure.com/cdatasoftware/_usersSettings/tokens
 with Code: Read and Work Items: Read scopes). The org is fixed — **`cdatasoftware`** — so don't ask
-for it. Requires Node.js (`npx`) — check #10 in Phase 0. Then run exactly:
-```powershell
-claude mcp add azure-devops -e AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp cdatasoftware -a env
+for it. Requires Node.js (`npx`) — check #10 in Phase 0.
+
+**⚠️ Shell matters — PowerShell mangles the `--` separator** and the command fails with
+`error: unknown option '-y'`. Run this in **Git Bash or cmd**, not PowerShell:
+
+```bash
+claude mcp add azure-devops -e AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp cdatasoftware -a pat
 ```
-The `-a env` flag tells the package to read the PAT from `AZURE_DEVOPS_EXT_PAT` non-interactively
-— don't substitute `-a azcli` or `-a interactive`, they require a signed-in `az` CLI or a TTY
-prompt and will hang or fail in an agent-driven setup. Never invent or hardcode a PAT.
+
+`-a pat` is the auth mode that reads `AZURE_DEVOPS_EXT_PAT`. Do not substitute `-a env` (that
+selects Azure's `ChainedTokenCredential` identity chain — service principal, managed identity,
+`az` CLI — and never reads `AZURE_DEVOPS_EXT_PAT`; it silently fails with
+`ChainedTokenCredential authentication failed / EnvironmentCredential is unavailable` on the first
+real tool call, even though `claude mcp list` shows `✔ Connected`). Do not substitute `-a azcli`
+or `-a interactive` — they require a signed-in `az` CLI or a TTY prompt and will hang in an
+agent-driven setup. Never invent or hardcode a PAT.
 
 **After either registration, verify before moving on** — don't just assume success:
 ```powershell
@@ -288,8 +295,16 @@ PR links manually (or proceed without fix review) when it reaches that phase.
 **Troubleshooting (don't reach for a different command — fix the actual cause):**
 - First run after registering Azure DevOps can take 10–20s while `npx` downloads
   `@azure-devops/mcp` — re-run `claude mcp list` after a short wait before assuming failure.
-- `! Needs authentication` on Azure DevOps almost always means the PAT is wrong, expired, or
-  missing scopes — regenerate it, then `claude mcp remove azure-devops -s user` and re-add.
+- `✔ Connected` but first tool call fails with `ChainedTokenCredential authentication failed` or
+  `EnvironmentCredential is unavailable` — the server was registered with `-a env` instead of
+  `-a pat`. Remove and re-add: `claude mcp remove azure-devops -s user`, then re-run the
+  registration command above with `-a pat`. Verify the PAT with `curl` before re-registering:
+  `curl -s -o /dev/null -w "%{http_code}" -u ":<PAT>" "https://dev.azure.com/cdatasoftware/_apis/projects?api-version=7.1"`
+  (expect `200`).
+- `! Needs authentication` — PAT is wrong, expired, or missing scopes (Code: Read + Work Items:
+  Read). Regenerate it, then remove and re-add the server.
+- `error: unknown option '-y'` during registration — you ran the command in PowerShell. Use
+  Git Bash or cmd instead.
 - `npx --version` missing — Node.js isn't installed; point the user to https://nodejs.org, don't
   try to install it silently.
 

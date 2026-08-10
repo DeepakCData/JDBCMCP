@@ -98,8 +98,9 @@ Fixed org constants (do not ask the user for these — they're the same for ever
 - **Jira email + token** → write into `.claude/settings.local.json` `env` block as `JIRA_USER_EMAIL`
   and `JIRA_API_TOKEN` (plus `JIRA_BASE_URL` = the site above). You write the file; never make the
   user hand-edit JSON.
-- **ADO PAT** → used in the `claude mcp add azure-devops … AZURE_DEVOPS_EXT_PAT=<PAT> … cdatasoftware …`
-  registration command.
+- **ADO PAT** → transformed (base64-encoded, see Phase 5) and used in the
+  `claude mcp add azure-devops … PERSONAL_ACCESS_TOKEN=<encoded> … cdatasoftware …` registration
+  command. Do not put the raw PAT straight into that command — see Phase 5 for why.
 
 If the preflight (Phase 0) finds any of these already configured, say so and **don't re-ask for
 that one** — only collect what's actually missing. A classic Jira API token can serve both the
@@ -243,9 +244,12 @@ diff). If either is absent, tell the user plainly that **PR review can only be d
 the PR link or paste the diff directly** — the skill will not guess what changed. Note the
 limitation and move on if they decline.
 
-**Both commands below are verified working. Do not improvise alternate flags, package names, or
-URLs.** If a command still fails, the fix is almost always the PAT/scopes or a stale `npx` cache
-— see Troubleshooting below — not a different command shape.
+**Both commands below are verified working as of their last update. Do not improvise alternate
+flags, package names, or URLs on a first attempt.** The Atlassian command is a stable hosted
+service and hasn't changed. The Azure DevOps command depends on a third-party npm package that
+**has already broken this exact command once** (see the version-pinning warning below) — if it
+fails, diagnose per that subsection's steps before assuming PAT/scopes and before improvising a
+different flag from memory.
 
 ### Jira (Atlassian) MCP server — lets the QA skill read tickets (Phase 1 of the skill)
 If no Jira/Atlassian server or connector was found, register Atlassian's official remote MCP
@@ -265,20 +269,45 @@ collect the org credentials"; generated at https://dev.azure.com/cdatasoftware/_
 with Code: Read and Work Items: Read scopes). The org is fixed — **`cdatasoftware`** — so don't ask
 for it. Requires Node.js (`npx`) — check #10 in Phase 0.
 
+**⚠️ `@azure-devops/mcp`'s auth contract has already changed once and will likely change again —
+this whole subsection has broken silently before.** `npx -y` always resolves whatever is
+*currently* published as `latest`, so a command that worked last month can fail today with no
+change on your end. Known history: an older version read a raw PAT from `AZURE_DEVOPS_EXT_PAT`
+via `-a pat`; **v2.9.0 removed that and instead reads `PERSONAL_ACCESS_TOKEN`, expecting it to
+already be the full base64-encoded HTTP Basic credential** (`base64(":<PAT>")`, colon included) —
+a raw PAT in that variable is silently rejected as a 401, not a validation error. **Pin the
+version** so this doesn't drift again:
+
 **⚠️ Shell matters — PowerShell mangles the `--` separator** and the command fails with
-`error: unknown option '-y'`. Run this in **Git Bash or cmd**, not PowerShell:
+`error: unknown option '-y'`. Run this in **Git Bash or cmd**, not PowerShell.
 
-```bash
-claude mcp add azure-devops -e AZURE_DEVOPS_EXT_PAT=<their-PAT> -- npx -y @azure-devops/mcp cdatasoftware -a pat
-```
-
-`-a pat` is the auth mode that reads `AZURE_DEVOPS_EXT_PAT`. Do not substitute `-a env` (that
-selects Azure's `ChainedTokenCredential` identity chain — service principal, managed identity,
-`az` CLI — and never reads `AZURE_DEVOPS_EXT_PAT`; it silently fails with
-`ChainedTokenCredential authentication failed / EnvironmentCredential is unavailable` on the first
-real tool call, even though `claude mcp list` shows `✔ Connected`). Do not substitute `-a azcli`
-or `-a interactive` — they require a signed-in `az` CLI or a TTY prompt and will hang in an
-agent-driven setup. Never invent or hardcode a PAT.
+1. Encode the PAT first — never put the raw PAT directly into the `claude mcp add` command:
+   ```powershell
+   [Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes(":$PAT"))
+   ```
+   (Bash: `echo -n ":$PAT" | base64`)
+2. Register with the encoded value and a **pinned version**:
+   ```bash
+   claude mcp add azure-devops -e PERSONAL_ACCESS_TOKEN=<base64-encoded-value> -- npx -y @azure-devops/mcp@2.9.0 cdatasoftware
+   ```
+   `@2.9.0` is pinned because that's the version this exact command was last verified against —
+   don't drop the version pin "to get the latest," that's what caused this break in the first
+   place. If a future setup genuinely needs a newer version, re-verify the auth contract first
+   (step below) and update the pin here, in one place, for everyone.
+3. **If this exact command still fails**, don't guess at another flag or revert to an older
+   pattern from memory — the contract may have changed again. Diagnose it directly:
+   - Verify the PAT itself is valid, independent of the MCP server:
+     `curl -s -o /dev/null -w "%{http_code}" -u ":<PAT>" "https://dev.azure.com/cdatasoftware/_apis/projects?api-version=7.1"`
+     (expect `200`). If this fails, the PAT is the actual problem — regenerate it. If this
+     succeeds, the PAT is fine and the problem is on the MCP package's side — don't regenerate it.
+   - Run the server directly to see its real stderr (`claude mcp list` only shows `✔ Connected`/
+     `✖ Failed`, not why): `npx -y @azure-devops/mcp@2.9.0 cdatasoftware` with the env var set,
+     and read what it prints on failure — it usually names the exact env var it wants.
+   - If needed, read the installed package's own source for the current contract: find it under
+     `~/.npm/_npx/*/node_modules/@azure-devops/mcp/dist/` (or wherever `npx` cached it) and check
+     `auth.js`/the README for what env var name and value format the installed version actually
+     expects — don't trust this doc's env var name over what the code in front of you does.
+   Never invent or hardcode a PAT.
 
 **After either registration, verify before moving on** — don't just assume success:
 ```powershell
@@ -295,18 +324,29 @@ PR links manually (or proceed without fix review) when it reaches that phase.
 **Troubleshooting (don't reach for a different command — fix the actual cause):**
 - First run after registering Azure DevOps can take 10–20s while `npx` downloads
   `@azure-devops/mcp` — re-run `claude mcp list` after a short wait before assuming failure.
-- `✔ Connected` but first tool call fails with `ChainedTokenCredential authentication failed` or
-  `EnvironmentCredential is unavailable` — the server was registered with `-a env` instead of
-  `-a pat`. Remove and re-add: `claude mcp remove azure-devops -s user`, then re-run the
-  registration command above with `-a pat`. Verify the PAT with `curl` before re-registering:
+- **`! Needs authentication`, a 401 on the first real tool call, or `✔ Connected` that still fails
+  when you actually call a tool (e.g. `core_list_projects`) — do NOT assume the PAT is bad and
+  regenerate it first.** Verify the PAT independently before touching it:
   `curl -s -o /dev/null -w "%{http_code}" -u ":<PAT>" "https://dev.azure.com/cdatasoftware/_apis/projects?api-version=7.1"`
-  (expect `200`).
-- `! Needs authentication` — PAT is wrong, expired, or missing scopes (Code: Read + Work Items:
-  Read). Regenerate it, then remove and re-add the server.
+  (expect `200`). If that returns `200`, the PAT is fine — the problem is almost certainly the
+  package's env-var name/encoding contract (see the version-pinning warning above), not the
+  credential. Only regenerate the PAT if this curl call itself fails.
+- `ChainedTokenCredential authentication failed` / `EnvironmentCredential is unavailable` — an
+  older package version read `-a env` as the auth mode, which ignores your PAT entirely and tries
+  Azure's identity chain instead. Re-register using the current pinned command above
+  (`PERSONAL_ACCESS_TOKEN`, no `-a` flag).
 - `error: unknown option '-y'` during registration — you ran the command in PowerShell. Use
   Git Bash or cmd instead.
 - `npx --version` missing — Node.js isn't installed; point the user to https://nodejs.org, don't
   try to install it silently.
+- **Secrets left behind after registration:** the base64-encoded credential passes through your
+  shell command line, so it lands in shell history (`~/.bash_history` or PowerShell's
+  `Get-History`) and in `~/.claude.json` (plaintext, wherever the server was registered). Treat
+  the encoded value as equally sensitive as the raw PAT — base64 is trivially reversible and is
+  directly usable for Basic auth as-is. This exposure is unavoidable with `claude mcp add`'s
+  design; mention it to the user so they can clear history if they're on a shared machine, and
+  tell them the PAT should be revoked/rotated if it's ever pasted somewhere they don't fully
+  trust (including this chat).
 
 ### Jira API token — enables definitive linked-PR discovery (Phase 2 of the skill)
 The skill's Phase 2 finds the PR(s) linked to a ticket by calling Jira's dev-status API (the same

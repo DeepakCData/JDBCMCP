@@ -73,10 +73,15 @@ public class ConnectTool {
                         driver's own Logfile=<temp>;Verbosity=5 (for CData-style connections) so requests/responses
                         are still captured to a file — returned as logfile_path. Read that file to analyse the traffic.
 
-                        Automatic proxy fallback: if mitmproxy fails to start (mitm_status starts with "skipped:")
-                        OR the proxied connection itself fails, the server automatically strips the proxy properties,
-                        injects driver-native logging instead, and retries the connection directly.
+                        Automatic proxy fallback: if mitmproxy fails to start (mitm_status starts with "skipped:"),
+                        the proxied connection itself fails, OR a real-table probe proves the driver is bypassing
+                        the proxy (query reached the backend but nothing was captured), the server automatically
+                        strips the proxy properties, injects driver-native logging instead, and retries directly.
                         proxy_fallback=true and proxy_fallback_reason explain why the fallback was triggered.
+                        capture_check reports how capture was verified: "verified:connect_traffic" |
+                        "verified:metadata_traffic" | "verified:probe_traffic" | "bypassed" |
+                        "inconclusive:<why>" (proxy kept, but capture unverified — check the JSONL after
+                        your first real query) | "n/a" (not proxied).
 
                         Options:
                           • use_proxy = "auto" (default) | "always" | "never". "always" forces proxy injection +
@@ -209,6 +214,12 @@ public class ConnectTool {
             effectiveUrl = injectDriverLog(effectiveUrl, logfilePath);
         }
 
+        // Capture-log size is sampled BEFORE connecting: for HTTP drivers the connection handshake
+        // itself (auth/login/metadata calls) usually produces the first captured traffic, and that
+        // growth is the cheapest proof the proxy is intercepting.
+        File mitmLog = new File(Config.mitmLogPath());
+        long mitmSizeBeforeConnect = mitmLog.exists() ? mitmLog.length() : -1L;
+
         Connection real = null;
         try {
             real = DriverManager.getConnection(effectiveUrl);
@@ -233,23 +244,29 @@ public class ConnectTool {
             }
         }
 
-        // Trigger 3: proxy connected but isn't actually intercepting traffic. Run a quick probe and
-        // check whether the mitmproxy log grew. If nothing was captured, the driver is bypassing the
-        // proxy (wrong ProxySSLType, driver-internal HTTP client ignoring system proxy, etc.) — fall
-        // back to driver-native logging which definitely captures the driver's own HTTP requests.
+        // Trigger 3: proxy connected but isn't actually intercepting traffic. Only fall back when a
+        // probe that FORCES a backend request produced no captured traffic. A constant select like
+        // SELECT 1 must never be used here: CData's embedded SQL engine answers it locally with zero
+        // HTTP traffic even when the proxy works, which made every quiet-connect HTTPS driver fall
+        // back spuriously. Verification order (cheapest first):
+        //   1. capture log grew during the connection handshake (auth/login calls) → verified
+        //   2. probe: SELECT one row from the first real table (metadata traffic also counts) → verified
+        //   3. probe ran successfully AND log still didn't grow → genuine bypass → fall back
+        //   4. probe couldn't run (no tables / query failed) → inconclusive → KEEP the proxy and
+        //      report capture_check so the caller knows verification is pending; do not fall back
+        //      on a guess.
+        String captureCheck = "n/a";
         if (proxyApplied) {
-            File logFile = new File(Config.mitmLogPath());
-            long sizeBefore = logFile.exists() ? logFile.length() : -1L;
-            try (Statement probe = real.createStatement()) {
-                probe.setQueryTimeout(5);
-                try (ResultSet prs = probe.executeQuery("SELECT 1")) {
-                    while (prs.next()) {} // drain
-                }
-            } catch (Exception ignored) {}
-            long sizeAfter = logFile.exists() ? logFile.length() : -1L;
+            long afterConnect = mitmLog.exists() ? mitmLog.length() : -1L;
+            if (afterConnect > mitmSizeBeforeConnect) {
+                captureCheck = "verified:connect_traffic";
+            } else {
+                captureCheck = probeCapture(real, mitmLog, afterConnect);
+            }
 
-            if (sizeAfter <= sizeBefore) {
-                // Proxy running but nothing was intercepted for this connection.
+            if ("bypassed".equals(captureCheck)) {
+                // Probe reached the backend, yet nothing crossed the proxy — the driver is genuinely
+                // bypassing it (driver-internal HTTP client ignoring proxy props, etc.).
                 proxyFallback = true;
                 proxyFallbackReason = "proxy_no_capture";
                 proxyApplied = false;
@@ -290,12 +307,68 @@ public class ConnectTool {
                     Map.entry("trust_all_certs",      trustAllCerts || proxyApplied),
                     Map.entry("stripped_proxy_props", strippedProxyProps),
                     Map.entry("proxy_fallback",       proxyFallback),
-                    Map.entry("proxy_fallback_reason", proxyFallbackReason)
+                    Map.entry("proxy_fallback_reason", proxyFallbackReason),
+                    Map.entry("capture_check",        captureCheck)
             ));
         } catch (Exception e) {
             // Redact secrets from the connection string before surfacing the error.
             return error("Connection failed (metadata): " + redact(e.getMessage()));
         }
+    }
+
+    /**
+     * Verifies that proxied traffic is actually being captured by forcing a backend request and
+     * watching the mitmproxy capture log for growth. A constant select (SELECT 1) is deliberately
+     * NOT used: CData's embedded SQL engine evaluates it locally without any HTTP call, so it can't
+     * distinguish "proxy bypassed" from "no traffic was needed". Instead, one row is selected from
+     * the first table the driver reports.
+     *
+     * @return "verified:metadata_traffic" — the getTables() lookup itself crossed the proxy;
+     *         "verified:probe_traffic"    — the real-table SELECT crossed the proxy;
+     *         "bypassed"                  — the probe query ran, yet nothing crossed the proxy;
+     *         "inconclusive:<why>"        — the probe couldn't run; capture remains unverified
+     */
+    private static String probeCapture(Connection conn, File mitmLog, long sizeBefore) {
+        String table = null;
+        try {
+            DatabaseMetaData md = conn.getMetaData();
+            String q = md.getIdentifierQuoteString();
+            if (q == null || q.isBlank()) q = "\"";
+            try (ResultSet t = md.getTables(null, null, "%", new String[]{"TABLE", "VIEW"})) {
+                if (t.next()) {
+                    String cat  = t.getString("TABLE_CAT");
+                    String sch  = t.getString("TABLE_SCHEM");
+                    String name = t.getString("TABLE_NAME");
+                    StringBuilder sb = new StringBuilder();
+                    if (cat != null && !cat.isBlank()) sb.append(q).append(cat).append(q).append('.');
+                    if (sch != null && !sch.isBlank()) sb.append(q).append(sch).append(q).append('.');
+                    sb.append(q).append(name).append(q);
+                    table = sb.toString();
+                }
+            }
+        } catch (Exception e) {
+            return "inconclusive:metadata_failed";
+        }
+
+        // The getTables() lookup may itself have hit the backend — that already proves capture.
+        long afterMeta = mitmLog.exists() ? mitmLog.length() : -1L;
+        if (afterMeta > sizeBefore) return "verified:metadata_traffic";
+        if (table == null) return "inconclusive:no_tables";
+
+        try (Statement st = conn.createStatement()) {
+            st.setMaxRows(1);
+            st.setQueryTimeout(10);
+            try (ResultSet rs = st.executeQuery("SELECT * FROM " + table)) {
+                while (rs.next()) {} // drain
+            }
+        } catch (Exception e) {
+            // Can't tell a blackholed proxy from an unqueryable table; keep the proxy and let the
+            // caller see capture_check=inconclusive rather than falling back on a guess.
+            return "inconclusive:probe_query_failed";
+        }
+
+        long afterProbe = mitmLog.exists() ? mitmLog.length() : -1L;
+        return (afterProbe > sizeBefore) ? "verified:probe_traffic" : "bypassed";
     }
 
     /** Classify a driver into TCP (direct), FILE (location-dependent), or HTTP (proxyable). */

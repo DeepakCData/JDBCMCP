@@ -245,10 +245,14 @@ Always follow this sequence — never skip a step:
    is wrong.
 
    **Automatic fallback:** if mitmproxy fails to start, the proxied connection errors, or a
-   `SELECT 1` probe after connect finds nothing in the JSONL log (driver bypassed the proxy), the
-   server automatically retries without proxy and injects the CData driver's own
+   real-table probe proves the driver bypassed the proxy (the server selects one row from the
+   first available table and checks the JSONL log grew — connect-handshake traffic counts too),
+   the server automatically retries without proxy and injects the CData driver's own
    `Logfile`/`Verbosity=5` instead. The response reports `proxy_applied`, `proxy_fallback`,
-   `proxy_fallback_reason`, `driver_category`, `proxy_reason`, `mitm_status`, and `logfile_path`.
+   `proxy_fallback_reason`, `driver_category`, `proxy_reason`, `mitm_status`, `logfile_path`, and
+   `capture_check` (`verified:*` = proxy capture proven; `bypassed` = fallback fired;
+   `inconclusive:*` = proxy kept but unverified — confirm the JSONL grew after your first real
+   query and treat a still-empty log as a bypass).
 
    **After every `connect` call, immediately report the capture status in the chat** — do not
    silently proceed. State all of the following in your next message:

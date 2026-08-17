@@ -70,9 +70,9 @@ public class ExecuteJavaTool {
         } catch (Exception e) {
             if (criterion != null && !criterion.isBlank()) {
                 session.addCheck(AssertQueryTool.check(criterion, false,
-                        "compile error: " + e.getMessage(), null));
+                        "compile error: " + describe(e), null));
             }
-            return error("Compiler error: " + e.getMessage());
+            return error("Compiler error: " + describe(e));
         }
 
         if (!compiled.success()) {

@@ -78,7 +78,9 @@ public class SnippetRunner {
             return new RunResult("",
                     outBuf.toString(StandardCharsets.UTF_8),
                     errBuf.toString(StandardCharsets.UTF_8),
-                    cause.getMessage());
+                    // toString(), not getMessage() — wrapper exceptions often have no
+                    // message and would report a bare "null" as the runtime error.
+                    cause.toString());
         } finally {
             System.setOut(oldOut);
             System.setErr(oldErr);

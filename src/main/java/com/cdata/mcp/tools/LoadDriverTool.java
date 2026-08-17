@@ -58,7 +58,7 @@ public class LoadDriverTool {
             // driver_class reports the class actually registered (not the requested name).
             return ok(Map.of("status", "loaded", "driver_class", loaded, "resolved_from", resolvedFrom));
         } catch (Exception e) {
-            return error("Failed to load driver: " + e.getMessage());
+            return error("Failed to load driver: " + describe(e));
         }
     }
 }

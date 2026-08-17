@@ -43,10 +43,10 @@ public class ProxyPreparedStatement implements InvocationHandler {
             String error = null;
             Object result = null;
             try {
-                result = method.invoke(real, args);
-            } catch (Exception ex) {
-                error = ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage();
-                throw ex;
+                result = ProxyInvoke.call(method, real, args);
+            } catch (Throwable t) {
+                error = ProxyInvoke.describe(t);
+                throw t;
             } finally {
                 long dur = System.currentTimeMillis() - start;
                 int rows = (result instanceof Integer i) ? i : -1;
@@ -55,6 +55,6 @@ public class ProxyPreparedStatement implements InvocationHandler {
             return result;
         }
 
-        return method.invoke(real, args);
+        return ProxyInvoke.call(method, real, args);
     }
 }

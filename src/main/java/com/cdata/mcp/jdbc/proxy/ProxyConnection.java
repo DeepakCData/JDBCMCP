@@ -30,16 +30,16 @@ public class ProxyConnection implements InvocationHandler {
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         switch (method.getName()) {
             case "createStatement" -> {
-                Statement st = (Statement) method.invoke(real, args);
+                Statement st = (Statement) ProxyInvoke.call(method, real, args);
                 return ProxyStatement.wrap(st, session, null);
             }
             case "prepareStatement" -> {
                 String sql = (args != null && args.length > 0) ? (String) args[0] : null;
-                PreparedStatement ps = (PreparedStatement) method.invoke(real, args);
+                PreparedStatement ps = (PreparedStatement) ProxyInvoke.call(method, real, args);
                 return ProxyPreparedStatement.wrap(ps, session, sql);
             }
             default -> {
-                return method.invoke(real, args);
+                return ProxyInvoke.call(method, real, args);
             }
         }
     }

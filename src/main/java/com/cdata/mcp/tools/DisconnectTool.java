@@ -34,7 +34,7 @@ public class DisconnectTool {
             session.getProxyConnection().close();
             return ok(Map.of("status", "closed", "session_id", sessionId));
         } catch (Exception e) {
-            return error("Close failed: " + e.getMessage());
+            return error("Close failed: " + describe(e));
         }
     }
 }

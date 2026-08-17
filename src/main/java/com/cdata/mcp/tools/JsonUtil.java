@@ -3,8 +3,13 @@ package com.cdata.mcp.tools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public class JsonUtil {
@@ -92,5 +97,75 @@ public class JsonUtil {
     public static String redact(String text) {
         if (text == null) return null;
         return SECRET.matcher(text).replaceAll(m -> m.group(1) + "=***");
+    }
+
+    // ------------------------------------------------------------------
+    // Exception description — wrapper exceptions (RuntimeException,
+    // UndeclaredThrowableException, …) frequently carry no message of their
+    // own, so reporting getMessage() directly renders "null" and hides the
+    // driver error underneath. CData drivers in particular wrap SQLExceptions
+    // this way, which turned a real "Invalid column name" into "Query failed: null".
+    // ------------------------------------------------------------------
+
+    /**
+     * Best available message for a throwable — never null.
+     * <p>
+     * A SQLException anywhere in the cause chain wins, prefixed with its SQLState, because
+     * that is the authoritative driver error and CData signals the error class through
+     * SQLState (e.g. HY000) rather than the exception type. Preferring it also skips
+     * wrappers built via {@code new RuntimeException(cause)}, whose message is merely
+     * {@code cause.toString()} and would otherwise mask the SQLState.
+     * <p>
+     * Failing that, the first non-blank message in the chain is used, and failing that
+     * the exception's simple name — so the result is never the bare string "null".
+     */
+    public static String describe(Throwable t) {
+        if (t == null) return "unknown error";
+
+        // Identity set guards against self-referencing or cyclic cause chains.
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        List<Throwable> chain = new ArrayList<>();
+        for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) chain.add(c);
+
+        for (Throwable c : chain) {
+            if (c instanceof SQLException sqlEx) {
+                String msg = sqlMessage(sqlEx, seen);
+                if (msg != null) return msg;
+            }
+        }
+        for (Throwable c : chain) {
+            String msg = trimToNull(c.getMessage());
+            if (msg != null) return msg;
+        }
+        return t.getClass().getSimpleName();
+    }
+
+    /** SQLState-prefixed message for a SQLException, following getNextException when it has none. */
+    private static String sqlMessage(SQLException sqlEx, Set<Throwable> seen) {
+        String msg = trimToNull(sqlEx.getMessage());
+        SQLException source = sqlEx;
+
+        if (msg == null) {
+            for (SQLException next = sqlEx.getNextException();
+                 next != null && seen.add(next);
+                 next = next.getNextException()) {
+                String chained = trimToNull(next.getMessage());
+                if (chained != null) {
+                    msg = chained;
+                    source = next;
+                    break;
+                }
+            }
+        }
+        if (msg == null) return null;
+
+        String state = trimToNull(source.getSQLState());
+        return (state == null || msg.startsWith("[" + state + "]")) ? msg : "[" + state + "] " + msg;
+    }
+
+    private static String trimToNull(String s) {
+        if (s == null) return null;
+        String trimmed = s.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

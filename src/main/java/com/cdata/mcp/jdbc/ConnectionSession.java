@@ -19,6 +19,9 @@ public class ConnectionSession {
 
     private final List<InterceptedCall> callLog = new CopyOnWriteArrayList<>();
 
+    // Wall-clock budget for the in-flight tool call; read by ProxyResultSet on every fetch.
+    private volatile QueryBudget budget = QueryBudget.UNBOUNDED;
+
     // QA test-report accumulator — assertions/comparisons record results here.
     private final List<Map<String, Object>> checks = new CopyOnWriteArrayList<>();
 
@@ -50,7 +53,16 @@ public class ConnectionSession {
 
     public void beginCall() {
         callLog.clear();
+        // Reset first: a budget left over from the previous call would expire this one.
+        budget = QueryBudget.UNBOUNDED;
     }
+
+    /** Set by the tool layer once the call's timeout is known; null clears the bound. */
+    public void setBudget(QueryBudget budget) {
+        this.budget = (budget != null) ? budget : QueryBudget.UNBOUNDED;
+    }
+
+    public QueryBudget getBudget() { return budget; }
 
     public void addCall(InterceptedCall call) {
         callLog.add(call);

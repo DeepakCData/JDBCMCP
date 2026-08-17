@@ -2,6 +2,7 @@ package com.cdata.mcp.tools;
 
 import com.cdata.mcp.config.Config;
 import com.cdata.mcp.jdbc.ConnectionSession;
+import com.cdata.mcp.jdbc.QueryBudget;
 import com.cdata.mcp.jdbc.ResultSetSerializer;
 import com.cdata.mcp.jdbc.SessionManager;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -39,7 +40,8 @@ public class ExportResultsTool {
                                 "session_id", strProp("Session ID from connect"),
                                 "sql",        strProp("SQL SELECT statement to export"),
                                 "file_path",  strProp("Absolute path of the CSV file to write, e.g. C:\\\\temp\\\\out.csv"),
-                                "max_rows",   intProp("(Optional) Maximum rows to export. Defaults to server config.")
+                                "max_rows",   intProp("(Optional) Maximum rows to export. Defaults to server config."),
+                                "timeout_seconds", intProp("(Optional) Query timeout in seconds. Defaults to server config.")
                         ),
                         List.of("session_id", "sql", "file_path")
                 ))
@@ -63,8 +65,9 @@ public class ExportResultsTool {
         int maxRows = (maxRowsArg != null && maxRowsArg > 0) ? maxRowsArg : Config.defaultMaxRows();
 
         session.beginCall();
-        try (Statement st = session.getProxyConnection().createStatement()) {
-            ExecuteQueryTool.applyLimits(st, Config.queryTimeoutSeconds(), maxRows);
+        try (Statement st = session.getProxyConnection().createStatement();
+             QueryBudget.Disarm disarm =
+                     ExecuteQueryTool.applyLimits(session, st, ExecuteQueryTool.resolveTimeout(args), maxRows)) {
             try (ResultSet rs = st.executeQuery(sql)) {
                 ResultSetSerializer.SerializedResult result = ResultSetSerializer.serialize(rs, maxRows);
                 session.setLastCallRowCount(result.rows().size());

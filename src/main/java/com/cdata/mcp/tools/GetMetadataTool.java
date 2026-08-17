@@ -60,7 +60,7 @@ public class GetMetadataTool {
                 return standardStyle(session.getProxyConnection(), tablePattern);
             }
         } catch (Exception e) {
-            return error("Metadata retrieval failed: " + e.getMessage());
+            return error("Metadata retrieval failed: " + describe(e));
         }
     }
 

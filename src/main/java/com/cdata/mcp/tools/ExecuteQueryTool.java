@@ -94,7 +94,7 @@ public class ExecuteQueryTool {
                 }
             }
         } catch (Exception e) {
-            return error("Query failed: " + e.getMessage());
+            return error("Query failed: " + describe(e));
         }
     }
 

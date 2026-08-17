@@ -312,7 +312,7 @@ public class ConnectTool {
             ));
         } catch (Exception e) {
             // Redact secrets from the connection string before surfacing the error.
-            return error("Connection failed (metadata): " + redact(e.getMessage()));
+            return error("Connection failed (metadata): " + redact(describe(e)));
         }
     }
 

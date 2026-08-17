@@ -74,7 +74,9 @@ public final class MitmProxyManager {
             } catch (IOException e) {
                 // mitmdump not on PATH or failed — non-fatal; proxy params are still injected
                 // so the user gets a clear connection-refused error rather than a silent miss.
-                return "skipped:" + e.getMessage().replace('\n', ' ');
+                String reason = e.getMessage() != null ? e.getMessage().replace('\n', ' ')
+                                                       : e.getClass().getSimpleName();
+                return "skipped:" + reason;
             }
         }
     }

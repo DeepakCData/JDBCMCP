@@ -109,9 +109,9 @@ public class CompareQueriesTool {
             return ok(response);
         } catch (Exception e) {
             if (criterion != null && !criterion.isBlank()) {
-                session.addCheck(AssertQueryTool.check(criterion, false, "compare error: " + e.getMessage(), null));
+                session.addCheck(AssertQueryTool.check(criterion, false, "compare error: " + describe(e), null));
             }
-            return error("compare_queries failed: " + e.getMessage());
+            return error("compare_queries failed: " + describe(e));
         }
     }
 

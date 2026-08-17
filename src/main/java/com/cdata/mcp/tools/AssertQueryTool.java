@@ -124,9 +124,9 @@ public class AssertQueryTool {
         } catch (Exception e) {
             // A failed query is itself a check failure when a criterion is being tracked.
             if (criterion != null && !criterion.isBlank()) {
-                session.addCheck(check(criterion, false, "query error: " + e.getMessage(), sql));
+                session.addCheck(check(criterion, false, "query error: " + describe(e), sql));
             }
-            return error("assert_query failed: " + e.getMessage());
+            return error("assert_query failed: " + describe(e));
         }
     }
 

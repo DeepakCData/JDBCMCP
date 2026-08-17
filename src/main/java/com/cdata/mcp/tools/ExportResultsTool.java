@@ -97,7 +97,7 @@ public class ExportResultsTool {
                 return ok(response);
             }
         } catch (Exception e) {
-            return error("export_results failed: " + e.getMessage());
+            return error("export_results failed: " + describe(e));
         }
     }
 

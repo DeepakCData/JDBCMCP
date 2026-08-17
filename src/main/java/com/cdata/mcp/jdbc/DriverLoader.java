@@ -58,7 +58,8 @@ public class DriverLoader {
                 URL jarUrl = new java.io.File(p).toURI().toURL();
                 return new URLClassLoader(new URL[]{jarUrl}, Thread.currentThread().getContextClassLoader());
             } catch (Exception e) {
-                throw new RuntimeException("Cannot open JAR: " + p + " — " + e.getMessage(), e);
+                String detail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                throw new RuntimeException("Cannot open JAR: " + p + " — " + detail, e);
             }
         });
     }

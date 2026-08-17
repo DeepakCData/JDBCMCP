@@ -119,7 +119,7 @@ public class ExecutePreparedTool {
             }
             return ok(response);
         } catch (Exception e) {
-            return error("execute_prepared failed: " + e.getMessage());
+            return error("execute_prepared failed: " + describe(e));
         }
     }
 

@@ -2,6 +2,7 @@ package com.cdata.mcp.tools;
 
 import com.cdata.mcp.config.Config;
 import com.cdata.mcp.jdbc.ConnectionSession;
+import com.cdata.mcp.jdbc.QueryBudget;
 import com.cdata.mcp.jdbc.ResultSetSerializer;
 import com.cdata.mcp.jdbc.SessionManager;
 import com.cdata.mcp.jdbc.TokenEstimator;
@@ -55,14 +56,13 @@ public class ExecuteQueryTool {
 
         Integer maxRowsArg = asInt(args.get("max_rows"));
         int maxRows = (maxRowsArg != null && maxRowsArg > 0) ? maxRowsArg : Config.defaultMaxRows();
-        Integer timeoutArg = asInt(args.get("timeout_seconds"));
-        int timeout = (timeoutArg != null && timeoutArg >= 0) ? timeoutArg : Config.queryTimeoutSeconds();
+        int timeout = resolveTimeout(args);
 
         boolean isExec = sql.trim().toUpperCase().startsWith("EXEC");
 
         session.beginCall();
-        try (Statement st = session.getProxyConnection().createStatement()) {
-            applyLimits(st, timeout, maxRows);
+        try (Statement st = session.getProxyConnection().createStatement();
+             QueryBudget.Disarm disarm = applyLimits(session, st, timeout, maxRows)) {
 
             if (!isExec) {
                 // ── Plain SELECT path ──────────────────────────────────────────
@@ -120,10 +120,26 @@ public class ExecuteQueryTool {
         return ok(response);
     }
 
-    /** Apply timeout and row cap to a statement; both are best-effort (some drivers ignore them). */
-    static void applyLimits(Statement st, int timeout, int maxRows) {
+    /**
+     * Apply the call's limits to a statement and arm the session's wall-clock budget.
+     *
+     * <p>setQueryTimeout and setMaxRows are best-effort — some drivers ignore them, and
+     * neither covers ResultSet iteration, which is where a lazily-paging driver spends
+     * most of its time. The budget is what actually bounds that; ProxyResultSet enforces
+     * it per fetch. Close the returned handle when the statement is done.
+     */
+    static QueryBudget.Disarm applyLimits(ConnectionSession session, Statement st, int timeout, int maxRows) {
         try { st.setQueryTimeout(timeout); } catch (Exception ignored) {}
         // +1 so the serializer can detect that more rows existed beyond the cap.
         try { if (maxRows > 0 && maxRows < Integer.MAX_VALUE) st.setMaxRows(maxRows + 1); } catch (Exception ignored) {}
+        QueryBudget budget = QueryBudget.ofSeconds(timeout);
+        session.setBudget(budget);
+        return budget.arm(st);
+    }
+
+    /** Resolve the call's timeout_seconds, falling back to server config. 0 means unbounded. */
+    static int resolveTimeout(Map<String, Object> args) {
+        Integer t = asInt(args.get("timeout_seconds"));
+        return (t != null && t >= 0) ? t : Config.queryTimeoutSeconds();
     }
 }

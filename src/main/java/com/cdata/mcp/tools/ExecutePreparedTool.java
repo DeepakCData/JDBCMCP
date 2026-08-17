@@ -2,6 +2,7 @@ package com.cdata.mcp.tools;
 
 import com.cdata.mcp.config.Config;
 import com.cdata.mcp.jdbc.ConnectionSession;
+import com.cdata.mcp.jdbc.QueryBudget;
 import com.cdata.mcp.jdbc.ResultSetSerializer;
 import com.cdata.mcp.jdbc.SessionManager;
 import com.cdata.mcp.jdbc.TokenEstimator;
@@ -72,15 +73,12 @@ public class ExecutePreparedTool {
 
         Integer maxRowsArg = asInt(args.get("max_rows"));
         int maxRows = (maxRowsArg != null && maxRowsArg > 0) ? maxRowsArg : Config.defaultMaxRows();
-        Integer timeoutArg = asInt(args.get("timeout_seconds"));
-        int timeout = (timeoutArg != null && timeoutArg >= 0) ? timeoutArg : Config.queryTimeoutSeconds();
+        int timeout = ExecuteQueryTool.resolveTimeout(args);
 
         session.beginCall();
-        try (PreparedStatement ps = session.getProxyConnection().prepareStatement(sql)) {
-            try { ps.setQueryTimeout(timeout); } catch (Exception ignored) {}
-            if (isQuery) {
-                try { ps.setMaxRows(maxRows + 1); } catch (Exception ignored) {}
-            }
+        try (PreparedStatement ps = session.getProxyConnection().prepareStatement(sql);
+             QueryBudget.Disarm disarm =
+                     ExecuteQueryTool.applyLimits(session, ps, timeout, isQuery ? maxRows : 0)) {
             bindParams(ps, params);
 
             Map<String, Object> response = new LinkedHashMap<>();

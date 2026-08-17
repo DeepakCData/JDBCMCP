@@ -6,6 +6,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -52,9 +53,15 @@ public class ProxyPreparedStatement implements InvocationHandler {
                 int rows = (result instanceof Integer i) ? i : -1;
                 session.addCall(new InterceptedCall(name, sql, new LinkedHashMap<>(params), dur, rows, error));
             }
-            return result;
+            return wrapResultSet(result);
         }
 
-        return ProxyInvoke.call(method, real, args);
+        // getResultSet() feeds the EXEC path, which reaches rows without executeQuery().
+        return wrapResultSet(ProxyInvoke.call(method, real, args));
+    }
+
+    /** Route every ResultSet leaving this statement through the budget-enforcing proxy. */
+    private Object wrapResultSet(Object result) {
+        return (result instanceof ResultSet rs) ? ProxyResultSet.wrap(rs, session) : result;
     }
 }

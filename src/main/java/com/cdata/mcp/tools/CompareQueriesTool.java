@@ -2,6 +2,7 @@ package com.cdata.mcp.tools;
 
 import com.cdata.mcp.config.Config;
 import com.cdata.mcp.jdbc.ConnectionSession;
+import com.cdata.mcp.jdbc.QueryBudget;
 import com.cdata.mcp.jdbc.ResultSetSerializer;
 import com.cdata.mcp.jdbc.SessionManager;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -41,7 +42,8 @@ public class CompareQueriesTool {
                                 "session_id",   strProp("Session ID from connect"),
                                 "sql_actual",   strProp("The 'actual' SELECT (e.g. the new/under-test query)"),
                                 "sql_expected", strProp("The 'expected' SELECT (e.g. the baseline/golden query)"),
-                                "criterion",    strProp("(Optional) Label for this check; records it into the test report")
+                                "criterion",    strProp("(Optional) Label for this check; records it into the test report"),
+                                "timeout_seconds", intProp("(Optional) Per-query timeout in seconds. Defaults to server config.")
                         ),
                         List.of("session_id", "sql_actual", "sql_expected")
                 ))
@@ -63,8 +65,9 @@ public class CompareQueriesTool {
         if (session == null) return error("Session not found: " + sessionId);
 
         try {
-            ResultSetSerializer.SerializedResult actual = runQuery(session, sqlActual);
-            ResultSetSerializer.SerializedResult expected = runQuery(session, sqlExpected);
+            int timeout = ExecuteQueryTool.resolveTimeout(args);
+            ResultSetSerializer.SerializedResult actual = runQuery(session, sqlActual, timeout);
+            ResultSetSerializer.SerializedResult expected = runQuery(session, sqlExpected, timeout);
 
             List<String> actualCols = columnNames(actual);
             List<String> expectedCols = columnNames(expected);
@@ -115,11 +118,13 @@ public class CompareQueriesTool {
         }
     }
 
-    private static ResultSetSerializer.SerializedResult runQuery(ConnectionSession session, String sql) throws Exception {
+    /** The timeout applies per query, not to the pair — each side gets its own budget. */
+    private static ResultSetSerializer.SerializedResult runQuery(ConnectionSession session, String sql, int timeout)
+            throws Exception {
         int cap = Config.defaultMaxRows();
         session.beginCall();
-        try (Statement st = session.getProxyConnection().createStatement()) {
-            ExecuteQueryTool.applyLimits(st, Config.queryTimeoutSeconds(), cap);
+        try (Statement st = session.getProxyConnection().createStatement();
+             QueryBudget.Disarm disarm = ExecuteQueryTool.applyLimits(session, st, timeout, cap)) {
             try (ResultSet rs = st.executeQuery(sql)) {
                 ResultSetSerializer.SerializedResult r = ResultSetSerializer.serialize(rs, cap);
                 session.setLastCallRowCount(r.rows().size());

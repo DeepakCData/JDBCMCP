@@ -1,7 +1,7 @@
 package com.cdata.mcp.tools;
 
-import com.cdata.mcp.config.Config;
 import com.cdata.mcp.jdbc.ConnectionSession;
+import com.cdata.mcp.jdbc.QueryBudget;
 import com.cdata.mcp.jdbc.SessionManager;
 import com.cdata.mcp.jdbc.TokenEstimator;
 import com.cdata.mcp.jdbc.proxy.InterceptedCall;
@@ -49,12 +49,11 @@ public class ExecuteUpdateTool {
             return error("Session is read-only; execute_update is disabled. Reconnect with read_only=false to allow writes.");
         }
 
-        Integer timeoutArg = asInt(args.get("timeout_seconds"));
-        int timeout = (timeoutArg != null && timeoutArg >= 0) ? timeoutArg : Config.queryTimeoutSeconds();
+        int timeout = ExecuteQueryTool.resolveTimeout(args);
 
         session.beginCall();
-        try (Statement st = session.getProxyConnection().createStatement()) {
-            try { st.setQueryTimeout(timeout); } catch (Exception ignored) {}
+        try (Statement st = session.getProxyConnection().createStatement();
+             QueryBudget.Disarm disarm = ExecuteQueryTool.applyLimits(session, st, timeout, 0)) {
             int count = st.executeUpdate(sql);
             List<InterceptedCall> calls = session.endCall(0, 0);
 

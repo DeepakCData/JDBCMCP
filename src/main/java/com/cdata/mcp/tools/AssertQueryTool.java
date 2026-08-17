@@ -2,6 +2,7 @@ package com.cdata.mcp.tools;
 
 import com.cdata.mcp.config.Config;
 import com.cdata.mcp.jdbc.ConnectionSession;
+import com.cdata.mcp.jdbc.QueryBudget;
 import com.cdata.mcp.jdbc.ResultSetSerializer;
 import com.cdata.mcp.jdbc.SessionManager;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -44,7 +45,8 @@ public class AssertQueryTool {
                                 "expected_row_count", intProp("(Optional) Expected number of rows"),
                                 "expected_value",     anyProp("(Optional) Expected value of the first column of the first row"),
                                 "comparator",         strProp("(Optional) eq (default), ne, gt, gte, lt, lte"),
-                                "criterion",          strProp("(Optional) Label for this check; records it into the test report")
+                                "criterion",          strProp("(Optional) Label for this check; records it into the test report"),
+                                "timeout_seconds",    intProp("(Optional) Query timeout in seconds. Defaults to server config.")
                         ),
                         List.of("session_id", "sql")
                 ))
@@ -73,8 +75,9 @@ public class AssertQueryTool {
         int cap = hasRowCount ? Config.defaultMaxRows() : 1;
 
         session.beginCall();
-        try (Statement st = session.getProxyConnection().createStatement()) {
-            ExecuteQueryTool.applyLimits(st, Config.queryTimeoutSeconds(), cap);
+        try (Statement st = session.getProxyConnection().createStatement();
+             QueryBudget.Disarm disarm =
+                     ExecuteQueryTool.applyLimits(session, st, ExecuteQueryTool.resolveTimeout(args), cap)) {
             try (ResultSet rs = st.executeQuery(sql)) {
                 ResultSetSerializer.SerializedResult result = ResultSetSerializer.serialize(rs, cap);
                 session.setLastCallRowCount(result.rows().size());

@@ -52,9 +52,15 @@ public class ProxyStatement implements InvocationHandler {
                 }
                 session.addCall(new InterceptedCall(name, sql, null, dur, rows, error));
             }
-            return result;
+            return wrapResultSet(result);
         }
 
-        return ProxyInvoke.call(method, real, args);
+        // getResultSet() feeds the EXEC path, which reaches rows without executeQuery().
+        return wrapResultSet(ProxyInvoke.call(method, real, args));
+    }
+
+    /** Route every ResultSet leaving this statement through the budget-enforcing proxy. */
+    private Object wrapResultSet(Object result) {
+        return (result instanceof ResultSet rs) ? ProxyResultSet.wrap(rs, session) : result;
     }
 }

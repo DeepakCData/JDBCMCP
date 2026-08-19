@@ -107,3 +107,10 @@ with their keys. Then `disconnect`.
 Finish with `get_test_report` + a chat summary: per-criterion pass/fail, the evidence (SQL +
 values) behind each, the capture channel line, and anything skipped and why (e.g. "table is
 read-only per metadata — INSERT tier skipped, reported as N/A not FAIL").
+
+## If a query times out
+
+`HYT00` carries a diagnosis naming the cause (client-side work / pagination / backend latency) and
+the matching next step. Follow the "When a query times out" section in SKILL.md: act on the shape,
+retry at most once with an explicit `timeout_seconds`, and never retry away a timeout on a
+performance ticket. Avoid bare `SELECT COUNT(*)` on HTTP connectors — filter it.

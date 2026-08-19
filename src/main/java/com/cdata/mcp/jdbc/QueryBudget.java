@@ -74,13 +74,38 @@ public final class QueryBudget {
      * "fetching rows", and is surfaced to the caller.
      */
     public void check(String phase) throws SQLTimeoutException {
+        check(phase, null);
+    }
+
+    /**
+     * Throw if the budget is spent, including a diagnosis of where the time went.
+     *
+     * <p>The generic advice ("raise timeout_seconds, or narrow the query") named two responses that
+     * suit opposite causes, with nothing to choose between them. {@code diagnosis} supplies the
+     * evidence — execute vs fetch time, rows pulled, HTTP round trips — and is only invoked once the
+     * budget has actually expired, so it costs nothing on the hot path.
+     *
+     * @param diagnosis lazily-built explanation, or null for the plain message
+     */
+    public void check(String phase, java.util.function.Supplier<String> diagnosis) throws SQLTimeoutException {
         if (!expired()) return;
-        throw new SQLTimeoutException(
-                "Query exceeded its " + timeoutSeconds + "s budget while " + phase
+        String detail = null;
+        if (diagnosis != null) {
+            // A failure to explain the timeout must never replace the timeout itself.
+            try { detail = diagnosis.get(); } catch (Throwable ignored) { }
+        }
+        String message = (detail != null && !detail.isBlank())
+                ? detail
+                : "Query exceeded its " + timeoutSeconds + "s budget while " + phase
                         + ". The driver returned from execute() and kept paging, which"
                         + " setQueryTimeout does not cover. Raise timeout_seconds, or narrow"
-                        + " the query so the driver returns fewer rows.",
-                "HYT00");
+                        + " the query so the driver returns fewer rows.";
+        throw new SQLTimeoutException(message, "HYT00");
+    }
+
+    /** The configured budget in seconds; 0 when unbounded. */
+    public int timeoutSeconds() {
+        return timeoutSeconds;
     }
 
     /**

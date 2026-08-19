@@ -51,13 +51,19 @@ public class ProxyResultSet implements InvocationHandler {
         }
 
         QueryBudget budget = session.getBudget();
-        budget.check("fetching rows");
+        budget.check("fetching rows", () -> session.diagnoseTimeout("fetching rows", budget.timeoutSeconds()));
         Object hasMore = ProxyInvoke.call(method, real, args);
+
+        // Rows are counted here so a timeout can report how far the scan got — the difference
+        // between "the driver is paging a lot of data" and "the driver is stuck on one call".
+        if (Boolean.TRUE.equals(hasMore)) session.recordRowFetched();
 
         // A statement cancelled by the watchdog ends iteration by returning false rather
         // than throwing. Without this second check the caller cannot tell a timed-out scan
         // from a complete one, and a truncated result gets reported as the whole answer.
-        if (Boolean.FALSE.equals(hasMore)) budget.check("fetching rows");
+        if (Boolean.FALSE.equals(hasMore)) {
+            budget.check("fetching rows", () -> session.diagnoseTimeout("fetching rows", budget.timeoutSeconds()));
+        }
 
         return hasMore;
     }

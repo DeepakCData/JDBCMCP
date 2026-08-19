@@ -30,6 +30,13 @@ public class ConnectionSession {
     // Wall-clock budget for the in-flight tool call; read by ProxyResultSet on every fetch.
     private volatile QueryBudget budget = QueryBudget.UNBOUNDED;
 
+    // Per-call evidence for diagnosing a timeout: when the call started, how many rows have been
+    // pulled through the ResultSet proxy, and where the capture log stood at the start so the HTTP
+    // round trips belonging to this call can be counted.
+    private volatile long callStartedNanos = System.nanoTime();
+    private volatile long rowsFetchedInCall;
+    private volatile long captureOffsetAtCallStart = -1L;
+
     // QA test-report accumulator — assertions/comparisons record results here.
     private final List<Map<String, Object>> checks = new CopyOnWriteArrayList<>();
 
@@ -69,6 +76,44 @@ public class ConnectionSession {
         callLog.clear();
         // Reset first: a budget left over from the previous call would expire this one.
         budget = QueryBudget.UNBOUNDED;
+        callStartedNanos = System.nanoTime();
+        rowsFetchedInCall = 0;
+        captureOffsetAtCallStart = currentCaptureLength();
+    }
+
+    /** Counted by ProxyResultSet on every row that comes back, for the timeout diagnosis. */
+    public void recordRowFetched() {
+        rowsFetchedInCall++;
+    }
+
+    public long getRowsFetchedInCall() { return rowsFetchedInCall; }
+
+    /**
+     * Why the in-flight call ran out of budget: elapsed vs execute time, rows pulled, and the HTTP
+     * round trips the capture log recorded since the call began.
+     */
+    public String diagnoseTimeout(String phase, int timeoutSeconds) {
+        long elapsedMs = (System.nanoTime() - callStartedNanos) / 1_000_000L;
+        return TimeoutDiagnosis.explain(phase, timeoutSeconds, elapsedMs, lastExecuteDurationMs(),
+                rowsFetchedInCall, captureOffsetAtCallStart);
+    }
+
+    /** Duration of the most recent execute* call in this call's log, or -1 when none is recorded. */
+    private long lastExecuteDurationMs() {
+        for (int i = callLog.size() - 1; i >= 0; i--) {
+            InterceptedCall c = callLog.get(i);
+            if (c.method != null && c.method.startsWith("execute")) return c.durationMs;
+        }
+        return -1L;
+    }
+
+    private static long currentCaptureLength() {
+        try {
+            java.io.File f = new java.io.File(com.cdata.mcp.config.Config.mitmLogPath());
+            return f.exists() ? f.length() : 0L;
+        } catch (Exception e) {
+            return -1L;
+        }
     }
 
     /** Set by the tool layer once the call's timeout is known; null clears the bound. */

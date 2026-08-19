@@ -440,6 +440,9 @@ not the display string.
 1. Record `intercepted_calls[*].duration_ms`. 2. Many small calls = N+1. 3. `execute_java` with
 `setQueryTimeout` + wall-clock timing. 4. Compare driver duration vs total elapsed.
 Pass: under the ticket threshold; single backend call, not N+1.
+**On this ticket type a timeout IS the result** — record it via `record_check` and do not raise
+`timeout_seconds` to make it pass. The `HYT00` diagnosis already reports the request count and
+per-request latency you need as evidence; see §When a query times out.
 
 ### New table/column support
 1. Table in `get_metadata` (both styles). 2. `SELECT *` returns, all expected columns present.
@@ -482,10 +485,56 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 
 ---
 
+## When a query times out (`HYT00`)
+
+A timeout is a **result**, not an accident to retry away. The error carries a diagnosis — read it
+before doing anything:
+
+```
+[HYT00] Query exceeded its 30s budget while fetching rows.
+  elapsed: 31.9s (execute() returned in 3.5s, 28.4s spent fetching rows)
+  rows fetched: 0
+  HTTP requests during this call: 10 (30.8s total, avg 3078ms each)
+  shape: row volume / pagination — 10 requests averaging 3078ms each (97% of elapsed) …
+  next: add a WHERE clause or lower max_rows to cut round trips …
+```
+
+The `shape` line is derived from the call's own evidence (execute vs fetch time, rows pulled, and
+the HTTP round trips recorded in the capture since the call began). Act on it in this order:
+
+| `shape` | What it means | Do this |
+|---|---|---|
+| `client-side work` | No HTTP, or HTTP is a small share — the driver is aggregating or filtering locally | **Narrow the query.** Raising the budget buys time for work that scales with the table. |
+| `row volume / pagination` | Many round trips; cost is the page count | **Add a WHERE clause or lower `max_rows`.** If requests scale with rows, that is an N+1 — a finding in its own right. |
+| `backend latency` | One or two genuinely slow calls | **Raising `timeout_seconds` is legitimate here.** State the new value in chat. |
+| `mixed` / `unknown` | Ambiguous, or no capture | Read `intercepted_calls` and the capture from `mitm_log_offset` yourself before deciding. |
+
+**Three rules that override the table:**
+
+1. **Never silently retry at a higher budget.** If the ticket concerns performance, a bigger budget
+   converts a real FAIL into a PASS. When performance is in scope, `record_check` the timeout as the
+   result and stop.
+2. **Retry at most once**, with an explicit `timeout_seconds` you name in chat along with the reason
+   the diagnosis justifies it. Never escalate twice.
+3. **Always report a timeout that occurred**, even when a later narrowed query succeeds. "Needed 90s
+   and 40 round trips to return 12 rows" is evidence the engineer needs, whatever the verdict.
+
+**Known-slow shapes on CData HTTP connectors** — an unfiltered `COUNT(*)` and a bare `SELECT *` on a
+large table are both pathological, because the driver pages the entire table client-side to satisfy
+them. Measured on SFMC `Assets`: `SELECT COUNT(*)` exceeded 30s after 10 requests without returning a
+row, and `SELECT *` spent 6.1s inside a single request. Prefer a filtered count
+(`COUNT(*) … WHERE <key> = …`) or `SELECT TOP n`.
+
+---
+
 ## Common pitfalls
 
-1. **Testing the wrong data** — confirm the repro key exists (`SELECT COUNT(*)`) before validating.
-   If 0, the environment lacks the data; flag it.
+1. **Testing the wrong data** — confirm the repro key exists before validating; if it doesn't, the
+   environment lacks the data, so flag that rather than reporting a failure. Use a **filtered**
+   existence check — `SELECT TOP 1 <key> FROM t WHERE <key> = …`, or `COUNT(*)` with the WHERE
+   clause attached. Never a bare `SELECT COUNT(*) FROM t` on an HTTP connector: the driver pages the
+   whole table client-side to count it, which on SFMC `Assets` blows a 30s budget without returning a
+   single row. See §When a query times out.
 2. **Timeout as a PASS** — 0 rows in 2 ms may be a silent failure; cross-check with a COUNT.
 3. **String equality for numeric columns** — verify the JDBC type with `getBigDecimal`/`getDouble`,
    not the display string.

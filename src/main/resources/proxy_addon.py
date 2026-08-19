@@ -84,8 +84,18 @@ class JdbcMcpLogger:
         req_body, req_len, req_cut = _body(req.content)
         resp_body, resp_len, resp_cut = _body(resp.content)
 
+        # Round-trip time, so a timed-out query can be attributed to backend latency rather than
+        # to row volume or client-side work. mitmproxy timestamps are epoch seconds (floats).
+        duration_ms = None
+        try:
+            if req.timestamp_start and resp.timestamp_end:
+                duration_ms = int((resp.timestamp_end - req.timestamp_start) * 1000)
+        except Exception:
+            duration_ms = None
+
         entry = {
             "ts":           _now(),
+            "duration_ms":  duration_ms,
             "method":       req.method,
             "url":          req.pretty_url,
             "req_headers":  _headers(req.headers),

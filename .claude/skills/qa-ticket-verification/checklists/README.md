@@ -45,7 +45,7 @@ These are stated once here so the per-operation files stay focused. **Read this 
 
 ### Session discipline
 
-1. `load_driver` → `connect` → tests → `get_usage_stats` → `get_test_report` → `disconnect`. Always.
+1. `load_driver` → `connect` → tests → `get_test_report` → `disconnect`. Always.
 2. **SELECT-only runs connect with `read_only: true`.** Any CUD/batch/proc-with-side-effects run
    needs `read_only: false` — say so explicitly before connecting, and confirm with the engineer
    if the target is shared or production-like data.

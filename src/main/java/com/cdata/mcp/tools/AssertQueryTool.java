@@ -90,6 +90,7 @@ public class AssertQueryTool {
                 Object expected;
                 String usedComparator = (comparator == null || comparator.isBlank()) ? "eq" : comparator;
 
+                Compare.Result comparison = null;
                 if (hasRowCount) {
                     mode = "row_count";
                     actual = result.rows().size();
@@ -97,12 +98,17 @@ public class AssertQueryTool {
                     if (result.truncated()) {
                         response.put("warning", "Row count assertion may be unreliable: results were truncated at " + cap + " rows.");
                     }
-                    passed = Compare.evaluate(actual, expected, usedComparator);
+                    comparison = Compare.compare(actual, expected, usedComparator);
+                    passed = comparison.passed();
                 } else if (hasValue) {
                     mode = "value";
                     actual = firstCell(result);
                     expected = expectedValue;
-                    passed = Compare.evaluate(actual, expected, usedComparator);
+                    comparison = Compare.compare(actual, expected, usedComparator);
+                    passed = comparison.passed();
+                    if (result.truncated()) {
+                        response.put("warning", "More than one row matched; the assertion only inspected the first row's first column.");
+                    }
                 } else {
                     mode = "exists";
                     actual = result.rows().size();
@@ -117,10 +123,18 @@ public class AssertQueryTool {
                 response.put("actual", actual);
                 response.put("expected", expected);
                 response.put("row_count", result.rows().size());
+                // How the values were compared decides the verdict, so it belongs in the evidence:
+                // "007" vs "7" passes numerically and fails as strings, and a null cannot be ordered.
+                if (comparison != null) {
+                    response.put("comparison", comparison.mode().name().toLowerCase());
+                    response.put("comparison_note", comparison.note());
+                }
                 if (criterion != null && !criterion.isBlank()) {
                     response.put("criterion", criterion);
+                    String how = (comparison != null) ? " (" + comparison.note() + ")" : "";
                     session.addCheck(check(criterion, passed,
-                            "assert_query[" + mode + "] actual=" + actual + " " + usedComparator + " expected=" + expected, sql));
+                            "assert_query[" + mode + "] actual=" + actual + " " + usedComparator
+                                    + " expected=" + expected + how, sql));
                 }
                 return ok(response);
             }
@@ -129,7 +143,7 @@ public class AssertQueryTool {
             if (criterion != null && !criterion.isBlank()) {
                 session.addCheck(check(criterion, false, "query error: " + describe(e), sql));
             }
-            return error("assert_query failed: " + describe(e));
+            return errorWithTrace("assert_query failed: " + describe(e), session);
         }
     }
 

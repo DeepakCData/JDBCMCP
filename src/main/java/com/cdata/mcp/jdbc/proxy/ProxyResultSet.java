@@ -2,6 +2,7 @@ package com.cdata.mcp.jdbc.proxy;
 
 import com.cdata.mcp.jdbc.ConnectionSession;
 import com.cdata.mcp.jdbc.QueryBudget;
+import com.cdata.mcp.jdbc.ReadOnlyGuard;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -36,9 +37,16 @@ public class ProxyResultSet implements InvocationHandler {
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        String name = method.getName();
+
+        // A positioned update is a write, and reaches the backend without any SQL for a tool to see.
+        if (ReadOnlyGuard.isResultSetWrite(name)) {
+            ReadOnlyGuard.checkResultSetWrite(session, name);
+        }
+
         // next() is the only paging call: SQLTimeoutException is a SQLException, so it is
         // declared on next() and propagates without being wrapped as undeclared.
-        if (!method.getName().equals("next")) {
+        if (!name.equals("next")) {
             return ProxyInvoke.call(method, real, args);
         }
 

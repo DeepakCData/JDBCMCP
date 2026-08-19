@@ -217,7 +217,7 @@ See **§Test strategies by ticket type** below for concrete query templates per 
 ## Phase 4 — Verify against the database (jdbc-platform tools)
 
 Always follow this sequence — never skip a step:
-`load_driver → connect → [tests] → get_usage_stats → disconnect`
+`load_driver → connect → [tests] → get_test_report → disconnect`
 
 1. **`load_driver`** if the driver isn't registered. Use CData short names (`saperp`,
    `salesforce`, `servicenow`, `googledrive`, …) — the server resolves the class automatically;
@@ -225,8 +225,14 @@ Always follow this sequence — never skip a step:
    If it fails, stop — there is nothing to test.
 
 2. **`connect`** — **default to `read_only: true`** unless a test case explicitly requires a write
-   path. Read-only blocks `execute_update` and write `execute_prepared`, protecting shared and
-   production data. Only set `trust_all_certs` / `set_jvm_proxy` when the engineer asks.
+   path. Read-only is enforced in the JDBC proxy layer, so it covers **every** tool including
+   `execute_java`: only `SELECT`/`WITH`/`EXPLAIN`/`DESCRIBE`/`SHOW` are permitted, and anything else
+   is refused with SQLState `25006`. **`EXEC` and `CALL` are treated as writes** — a procedure body is
+   opaque, and CData procs like `DownloadObjects` have side effects. So a read-only session cannot run
+   stored procedures: if the ticket needs one, connect with `read_only: false` and say so in chat.
+   It is a guard against an accidental write, not a sandbox — snippet code can still reach the
+   underlying connection via `getMetaData().getConnection()` or `unwrap()`.
+   Only set `trust_all_certs` / `set_jvm_proxy` when the engineer asks.
    Reuse the returned `session_id` for every later call.
 
    **Proxy:** Just call `connect` normally with the user's connection string **exactly as given —
@@ -313,7 +319,6 @@ Always follow this sequence — never skip a step:
 ## Phase 5 — Report
 
 - `get_test_report` — Markdown summary (pass/fail per criterion + session stats).
-- `get_usage_stats` — include `total_queries`, `total_intercepted_calls`, `estimated_tokens_used`.
 - `export_results` — write evidence rows to CSV when an attachment is wanted.
 - Summarize the verdict: which acceptance criteria passed/failed, the concrete data behind each,
   and whether the fix from Phase 2 actually does what the ticket asked. If Phase 2 was skipped
@@ -527,10 +532,12 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 | `compare_queries` | Diff two result sets (order-insensitive) | `session_id`, `sql_actual`, `sql_expected`, `criterion` |
 | `record_check` | Record a non-SQL pass/fail check | `session_id`, `criterion`, `passed`, `detail`, `sql` |
 | `export_results` | Export a SELECT to CSV (UTF-8, RFC4180) | `session_id`, `sql`, `file_path`, `max_rows` |
-| `get_usage_stats` | Cumulative session stats | `session_id` |
 | `get_test_report` | Markdown pass/fail report | `session_id` |
 | `list_sessions` | List open sessions | _(none)_ |
 | `disconnect` | Close the connection, delete the session's driver log | `session_id`, `keep_logfile` (default false). Response: `logfile_deleted`, `logfile_bytes_freed` |
+
+**Session activity totals** (queries run, rows returned, intercepted calls, JDBC duration, estimated
+tokens) are in the "Session activity" section of `get_test_report` — there is no separate stats tool.
 
 ---
 
@@ -577,7 +584,7 @@ treated as HTTP/cloud and proxied.
 This project's `.claude/settings.json` allowlists every read/list/search tool on Jira
 (`atlassian`), Azure DevOps (`azure-devops`), and `jdbc-platform` (`execute_query`,
 `execute_prepared`, `get_metadata`, `compare_queries`, `assert_query`, `record_check`,
-`export_results`, `list_sessions`, `get_usage_stats`, `get_test_report`), plus read-only shell
+`export_results`, `list_sessions`, `get_test_report`), plus read-only shell
 commands and the read-only `find-linked-prs.ps1` PR-discovery helper. Use these without asking —
 just narrate what you're reading as you go through Phases 1–4. Two different write boundaries apply:
 - **Database side** (`execute_update`, `load_driver`, `connect`/`disconnect`) — needed for testing;

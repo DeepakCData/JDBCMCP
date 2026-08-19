@@ -82,6 +82,10 @@ public class ConnectTool {
                         the proxy (query reached the backend but nothing was captured), the server automatically
                         strips the proxy properties, injects driver-native logging instead, and retries directly.
                         proxy_fallback=true and proxy_fallback_reason explain why the fallback was triggered.
+                        probe_sql, when non-empty, is a one-row SELECT the server ran during connect to prove the
+                        proxy captures traffic. Its request is in the capture log but has NO matching entry in any
+                        intercepted_calls, so do not count it as one of your own queries.
+
                         capture_check reports how capture was verified: "verified:connect_traffic" |
                         "verified:metadata_traffic" | "verified:probe_traffic" | "bypassed" |
                         "inconclusive:<why>" (proxy kept, but capture unverified — check the JSONL after
@@ -164,6 +168,7 @@ public class ConnectTool {
         String mitmStatus = "n/a";
         boolean proxyFallback = false;
         String proxyFallbackReason = "";
+        boolean jvmProxyHeld = false;
 
         // Caller-supplied proxy_host/proxy_port hoisted so they're accessible in the fallback path.
         String pHost = (proxyHost != null && !proxyHost.isBlank()) ? proxyHost : DEFAULT_PROXY_HOST;
@@ -190,7 +195,7 @@ public class ConnectTool {
             } else {
                 effectiveUrl = injectCDataProxy(effectiveUrl, pHost, pPort);
                 proxyApplied = true;
-                if (setJvmProxy) applyJvmProxy(pHost, pPort);
+                if (setJvmProxy) { applyJvmProxy(pHost, pPort); jvmProxyHeld = true; }
             }
         }
 
@@ -260,12 +265,16 @@ public class ConnectTool {
         //      report capture_check so the caller knows verification is pending; do not fall back
         //      on a guess.
         String captureCheck = "n/a";
+        // The probe runs on the raw connection, before the session exists, so its request lands in
+        // the capture log with no corresponding intercepted_call. Reporting the SQL keeps anyone
+        // counting requests (looking for N+1, say) from attributing it to their own query.
+        StringBuilder probeSql = new StringBuilder();
         if (proxyApplied) {
             long afterConnect = mitmLog.exists() ? mitmLog.length() : -1L;
             if (afterConnect > mitmSizeBeforeConnect) {
                 captureCheck = "verified:connect_traffic";
             } else {
-                captureCheck = probeCapture(real, mitmLog, afterConnect);
+                captureCheck = probeCapture(real, mitmLog, afterConnect, probeSql);
             }
 
             if ("bypassed".equals(captureCheck)) {
@@ -294,6 +303,7 @@ public class ConnectTool {
         ConnectionSession session = new ConnectionSession(sessionId);
         session.setReadOnly(readOnly);
         session.setLogfilePath(logfilePath);
+        session.setJvmProxyApplied(jvmProxyHeld);
         Connection proxy = ProxyConnection.wrap(real, session);
         session.setProxyConnection(proxy);
         SessionManager.put(sessionId, session);
@@ -318,7 +328,8 @@ public class ConnectTool {
                     Map.entry("stripped_proxy_props", strippedProxyProps),
                     Map.entry("proxy_fallback",       proxyFallback),
                     Map.entry("proxy_fallback_reason", proxyFallbackReason),
-                    Map.entry("capture_check",        captureCheck)
+                    Map.entry("capture_check",        captureCheck),
+                    Map.entry("probe_sql",            probeSql.toString())
             ));
         } catch (Exception e) {
             // Redact secrets from the connection string before surfacing the error.
@@ -338,7 +349,7 @@ public class ConnectTool {
      *         "bypassed"                  — the probe query ran, yet nothing crossed the proxy;
      *         "inconclusive:<why>"        — the probe couldn't run; capture remains unverified
      */
-    private static String probeCapture(Connection conn, File mitmLog, long sizeBefore) {
+    private static String probeCapture(Connection conn, File mitmLog, long sizeBefore, StringBuilder probeSqlOut) {
         String table = null;
         try {
             DatabaseMetaData md = conn.getMetaData();
@@ -365,10 +376,12 @@ public class ConnectTool {
         if (afterMeta > sizeBefore) return "verified:metadata_traffic";
         if (table == null) return "inconclusive:no_tables";
 
+        String probeSql = "SELECT * FROM " + table;
+        probeSqlOut.append(probeSql);
         try (Statement st = conn.createStatement()) {
             st.setMaxRows(1);
             st.setQueryTimeout(10);
-            try (ResultSet rs = st.executeQuery("SELECT * FROM " + table)) {
+            try (ResultSet rs = st.executeQuery(probeSql)) {
                 while (rs.next()) {} // drain
             }
         } catch (Exception e) {
@@ -546,12 +559,41 @@ public class ConnectTool {
         return url + ";" + key + "=" + value;
     }
 
+    private static final String[] JVM_PROXY_KEYS =
+            {"http.proxyHost", "http.proxyPort", "https.proxyHost", "https.proxyPort"};
+
+    // Reference count of live sessions that asked for set_jvm_proxy, plus the values that were in
+    // place before the first of them. These properties are process-global: one session used to set
+    // them permanently, silently rerouting every later connection in the server — including native
+    // drivers that were never meant to be proxied.
+    private static int jvmProxyUsers;
+    private static final Map<String, String> JVM_PROXY_SAVED = new java.util.HashMap<>();
+
     /** Sets JVM-wide HTTP/HTTPS proxy system properties for the driver's underlying HTTP client. */
-    private static void applyJvmProxy(String proxyHost, String proxyPort) {
+    private static synchronized void applyJvmProxy(String proxyHost, String proxyPort) {
+        if (jvmProxyUsers == 0) {
+            for (String k : JVM_PROXY_KEYS) JVM_PROXY_SAVED.put(k, System.getProperty(k));
+        }
+        jvmProxyUsers++;
         System.setProperty("http.proxyHost",  proxyHost);
         System.setProperty("http.proxyPort",  proxyPort);
         System.setProperty("https.proxyHost", proxyHost);
         System.setProperty("https.proxyPort", proxyPort);
+    }
+
+    /**
+     * Releases one session's hold on the JVM-wide proxy properties, restoring the values that were
+     * in place before the first hold once the last one is gone.
+     */
+    public static synchronized void releaseJvmProxy() {
+        if (jvmProxyUsers == 0) return;
+        if (--jvmProxyUsers > 0) return;
+        for (String k : JVM_PROXY_KEYS) {
+            String prior = JVM_PROXY_SAVED.get(k);
+            if (prior == null) System.clearProperty(k);
+            else System.setProperty(k, prior);
+        }
+        JVM_PROXY_SAVED.clear();
     }
 
     /**

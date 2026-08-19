@@ -40,6 +40,9 @@ public class DisconnectTool {
         ConnectionSession session = SessionManager.remove(sessionId);
         if (session == null) return error("Session not found: " + sessionId);
 
+        // Give back the process-global proxy properties before anything else can fail.
+        if (session.isJvmProxyApplied()) ConnectTool.releaseJvmProxy();
+
         try {
             session.getProxyConnection().close();
         } catch (Exception e) {

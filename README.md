@@ -8,7 +8,7 @@ evidence-backed pass/fail reports for Jira tickets (via the bundled `qa-ticket-v
 Claude skill).
 
 **15 tools:** `load_driver`, `connect`, `execute_query`, `execute_update`, `execute_prepared`,
-`execute_java`, `get_metadata`, `list_sessions`, `get_usage_stats`, `disconnect`, `record_check`,
+`execute_java`, `get_metadata`, `list_sessions`, `disconnect`, `record_check`,
 `assert_query`, `compare_queries`, `get_test_report`, `export_results`.
 
 **Permissions:** the checked-in [.claude/settings.json](.claude/settings.json) allowlists every
@@ -100,6 +100,14 @@ Every `connect` response reports `driver_category`, `proxy_applied`, `mitm_statu
 `proxy_fallback`, `proxy_fallback_reason`, and `logfile_path` — the agent is required to state
 the active capture channel in chat before running queries.
 
+### What the capture log does not contain
+
+Credential headers (`Authorization`, `Cookie`, `X-Api-Key`, …) are replaced with a length plus a
+truncated SHA-256 — enough to tell two tokens apart or spot a refresh, without writing a live bearer
+token to a file in the system temp directory. Bodies are capped at `JDBC_MCP_MITM_MAX_BODY` (64 KB)
+with `resp_body_truncated` marking what was cut; an uncapped body turned a single download into a
+100 MB log line. Override the header list with `JDBC_MCP_MITM_REDACT_HEADERS`.
+
 ### Log hygiene — read the capture from `mitm_log_offset`, not from the top
 
 The JSONL capture is **append-only and shared by every session** in a server run, so reading it
@@ -141,6 +149,8 @@ Nothing outside `<temp>/jdbc_mcp_*` is ever touched.
 | Log retention (days) | `JDBC_MCP_LOG_RETENTION_DAYS` | 3 |
 | Log footprint cap (MB) | `JDBC_MCP_LOG_MAX_TOTAL_MB` | 512 |
 | Startup rotation + sweep | `JDBC_MCP_LOG_SWEEP` | true |
+| Max captured body (chars) | `JDBC_MCP_MITM_MAX_BODY` | 65536 |
+| Redacted capture headers | `JDBC_MCP_MITM_REDACT_HEADERS` | authorization, cookie, x-api-key, … |
 
 Each also has a `-Djdbc.mcp.*` system-property form — see
 [Config.java](src/main/java/com/cdata/mcp/config/Config.java).

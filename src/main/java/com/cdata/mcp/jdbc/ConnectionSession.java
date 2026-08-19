@@ -18,6 +18,10 @@ public class ConnectionSession {
     // Remembered so disconnect can reclaim it instead of leaving it in temp forever.
     private String logfilePath = "";
 
+    // True when this session asked for set_jvm_proxy and therefore holds the process-global proxy
+    // system properties; released on close so the setting does not outlive the session.
+    private boolean jvmProxyApplied;
+
     private final long createdAt = System.currentTimeMillis();
     private volatile long lastAccessed = System.currentTimeMillis();
 
@@ -53,6 +57,9 @@ public class ConnectionSession {
 
     public String getLogfilePath() { return logfilePath; }
     public void setLogfilePath(String logfilePath) { this.logfilePath = (logfilePath != null) ? logfilePath : ""; }
+
+    public boolean isJvmProxyApplied() { return jvmProxyApplied; }
+    public void setJvmProxyApplied(boolean applied) { this.jvmProxyApplied = applied; }
 
     public void touch() { this.lastAccessed = System.currentTimeMillis(); }
     public long getLastAccessed() { return lastAccessed; }

@@ -5,6 +5,7 @@ import com.cdata.mcp.jdbc.ConnectionSession;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
@@ -37,6 +38,13 @@ public class ProxyConnection implements InvocationHandler {
                 String sql = (args != null && args.length > 0) ? (String) args[0] : null;
                 PreparedStatement ps = (PreparedStatement) ProxyInvoke.call(method, real, args);
                 return ProxyPreparedStatement.wrap(ps, session, sql);
+            }
+            case "prepareCall" -> {
+                // Previously unwrapped, so stored-procedure calls produced no trace and their
+                // ResultSets were never budget-checked.
+                String sql = (args != null && args.length > 0) ? (String) args[0] : null;
+                CallableStatement cs = (CallableStatement) ProxyInvoke.call(method, real, args);
+                return ProxyPreparedStatement.wrapCall(cs, session, sql);
             }
             default -> {
                 return ProxyInvoke.call(method, real, args);

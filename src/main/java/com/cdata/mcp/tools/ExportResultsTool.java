@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,14 +35,17 @@ public class ExportResultsTool {
                         Execute a SELECT and write the result set to a CSV file (RFC4180-quoted, UTF-8).
                         Returns the absolute path, row count, and whether the data was truncated by the row cap.
                         Binary cells are written as [base64:<bytes>]; truncated text cells are marked. Use a
-                        larger max_rows for full exports.""")
+                        larger max_rows for full exports — rows stream straight to the file, so a large export
+                        does not have to fit in memory.
+                        Refuses to overwrite an existing file unless overwrite=true.""")
                 .inputSchema(schema(
                         Map.of(
                                 "session_id", strProp("Session ID from connect"),
                                 "sql",        strProp("SQL SELECT statement to export"),
                                 "file_path",  strProp("Absolute path of the CSV file to write, e.g. C:\\\\temp\\\\out.csv"),
                                 "max_rows",   intProp("(Optional) Maximum rows to export. Defaults to server config."),
-                                "timeout_seconds", intProp("(Optional) Query timeout in seconds. Defaults to server config.")
+                                "timeout_seconds", intProp("(Optional) Query timeout in seconds. Defaults to server config."),
+                                "overwrite",  boolProp("(Optional) Allow replacing an existing file at file_path. Default false.")
                         ),
                         List.of("session_id", "sql", "file_path")
                 ))
@@ -63,44 +67,64 @@ public class ExportResultsTool {
 
         Integer maxRowsArg = asInt(args.get("max_rows"));
         int maxRows = (maxRowsArg != null && maxRowsArg > 0) ? maxRowsArg : Config.defaultMaxRows();
+        boolean overwrite = asBool(args.get("overwrite"), false);
+
+        Path path = Path.of(filePath);
+        // Writing a CSV used to truncate whatever was already at file_path. An agent-supplied path is
+        // easy to get wrong, and the previous contents were unrecoverable, so replacing a file is now
+        // something the caller has to ask for.
+        if (Files.exists(path) && !overwrite) {
+            return error("Refusing to overwrite existing file: " + path.toAbsolutePath()
+                    + ". Pass overwrite=true to replace it, or choose another file_path.");
+        }
 
         session.beginCall();
         try (Statement st = session.getProxyConnection().createStatement();
              QueryBudget.Disarm disarm =
                      ExecuteQueryTool.applyLimits(session, st, ExecuteQueryTool.resolveTimeout(args), maxRows)) {
             try (ResultSet rs = st.executeQuery(sql)) {
-                ResultSetSerializer.SerializedResult result = ResultSetSerializer.serialize(rs, maxRows);
-                session.setLastCallRowCount(result.rows().size());
-                session.endCall(result.rows().size(), 0);
-
-                Path path = Path.of(filePath);
                 if (path.getParent() != null) Files.createDirectories(path.getParent());
 
-                List<String> headers = new java.util.ArrayList<>();
-                for (Map<String, Object> col : result.columns()) headers.add(String.valueOf(col.get("name")));
+                ResultSetMetaData meta = rs.getMetaData();
+                int colCount = meta.getColumnCount();
+                String[] headers = new String[colCount];
+                int[] types = new int[colCount];
+                for (int i = 1; i <= colCount; i++) {
+                    headers[i - 1] = meta.getColumnLabel(i);
+                    types[i - 1] = meta.getColumnType(i);
+                }
 
+                int rowCount = 0;
+                boolean truncated = false;
+                // Rows go straight to the writer. Materializing the whole result set first meant a
+                // "full export" with a large max_rows had to fit in the heap before a byte was written.
                 try (BufferedWriter w = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
-                    w.write(toCsvRow(headers.toArray(new String[0])));
+                    w.write(toCsvRow(headers));
                     w.write("\r\n");
-                    for (Map<String, Object> row : result.rows()) {
-                        String[] cells = new String[headers.size()];
-                        for (int i = 0; i < headers.size(); i++) {
-                            cells[i] = renderCell(row.get(headers.get(i)));
+                    while (rs.next()) {
+                        if (rowCount >= maxRows) { truncated = true; break; }
+                        String[] cells = new String[colCount];
+                        for (int i = 1; i <= colCount; i++) {
+                            cells[i - 1] = renderCell(ResultSetSerializer.cellValue(rs, i, types[i - 1]));
                         }
                         w.write(toCsvRow(cells));
                         w.write("\r\n");
+                        rowCount++;
                     }
                 }
 
+                session.setLastCallRowCount(rowCount);
+                session.endCall(rowCount, 0);
+
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("file_path", path.toAbsolutePath().toString());
-                response.put("row_count", result.rows().size());
-                response.put("column_count", headers.size());
-                response.put("truncated", result.truncated());
+                response.put("row_count", rowCount);
+                response.put("column_count", colCount);
+                response.put("truncated", truncated);
                 return ok(response);
             }
         } catch (Exception e) {
-            return error("export_results failed: " + describe(e));
+            return errorWithTrace("export_results failed: " + describe(e), session);
         }
     }
 

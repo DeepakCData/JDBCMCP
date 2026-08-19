@@ -32,7 +32,6 @@ public class Main {
                 .toolCall(GetMetadataTool.tool(),     GetMetadataTool::handle)
                 .toolCall(ExecutePreparedTool.tool(), ExecutePreparedTool::handle)
                 .toolCall(ExecuteJavaTool.tool(),   ExecuteJavaTool::handle)
-                .toolCall(GetUsageStatsTool.tool(), GetUsageStatsTool::handle)
                 .toolCall(ListSessionsTool.tool(),  ListSessionsTool::handle)
                 .toolCall(RecordCheckTool.tool(),   RecordCheckTool::handle)
                 .toolCall(AssertQueryTool.tool(),   AssertQueryTool::handle)

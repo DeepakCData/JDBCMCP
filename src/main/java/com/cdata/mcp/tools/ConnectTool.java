@@ -69,6 +69,11 @@ public class ConnectTool {
                         ("started" | "already_running" | "external_proxy" | "skipped:<reason>" | "n/a"),
                         logfile_path, proxy_fallback and proxy_fallback_reason.
 
+                        If the connection fails with a missing class (ClassNotFoundException /
+                        NoClassDefFoundError / UnsatisfiedLinkError), the error says so and points at extra_jars:
+                        CData connectors that wrap a vendor driver (Oracle OCI and other native/thin wrappers)
+                        need the vendor's own JAR loaded alongside the CData one. Re-run load_driver with both.
+
                         Whenever the proxy is NOT used (or falls back), the server automatically injects the CData
                         driver's own Logfile=<temp>;Verbosity=5 (for CData-style connections) so requests/responses
                         are still captured to a file — returned as logfile_path. Read that file to analyse the traffic.
@@ -246,10 +251,10 @@ public class ConnectTool {
                 try {
                     real = DriverManager.getConnection(fallbackUrl);
                 } catch (Exception secondError) {
-                    return error("Connection failed (proxy then direct): " + redact(secondError.getMessage()));
+                    return error(connectionFailure("Connection failed (proxy then direct)", secondError));
                 }
             } else {
-                return error("Connection failed: " + redact(firstError.getMessage()));
+                return error(connectionFailure("Connection failed", firstError));
             }
         }
 
@@ -290,7 +295,7 @@ public class ConnectTool {
                 try {
                     real = DriverManager.getConnection(fallbackUrl);
                 } catch (Exception reconnectError) {
-                    return error("Connection failed (proxy no-capture fallback): " + redact(reconnectError.getMessage()));
+                    return error(connectionFailure("Connection failed (proxy no-capture fallback)", reconnectError));
                 }
             }
         }
@@ -335,6 +340,19 @@ public class ConnectTool {
             // Redact secrets from the connection string before surfacing the error.
             return error("Connection failed (metadata): " + redact(describe(e)));
         }
+    }
+
+    /**
+     * A connection-failure message: the driver's own error, secrets removed, plus the companion-JAR
+     * hint when the cause is a missing vendor class.
+     *
+     * <p>describe() rather than getMessage(): a linkage failure often arrives wrapped in something
+     * with no message of its own, which rendered as a bare "null" and hid the actual cause.
+     */
+    private static String connectionFailure(String prefix, Throwable t) {
+        String message = prefix + ": " + redact(describe(t));
+        String hint = com.cdata.mcp.jdbc.DriverLoader.companionJarHint(t);
+        return (hint != null) ? message + " " + hint : message;
     }
 
     /**

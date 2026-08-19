@@ -5,6 +5,7 @@ import com.cdata.mcp.jdbc.ConnectionSession;
 import com.cdata.mcp.jdbc.QueryBudget;
 import com.cdata.mcp.jdbc.ResultSetSerializer;
 import com.cdata.mcp.jdbc.SessionManager;
+import com.cdata.mcp.jdbc.proxy.InterceptedCall;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
 
@@ -66,8 +67,12 @@ public class CompareQueriesTool {
 
         try {
             int timeout = ExecuteQueryTool.resolveTimeout(args);
-            ResultSetSerializer.SerializedResult actual = runQuery(session, sqlActual, timeout);
-            ResultSetSerializer.SerializedResult expected = runQuery(session, sqlExpected, timeout);
+            // Each side is captured separately: beginCall() clears the log, so the first query's
+            // trace would otherwise be wiped by the second and never reach the caller at all.
+            Side actualSide   = runQuery(session, sqlActual, timeout);
+            Side expectedSide = runQuery(session, sqlExpected, timeout);
+            ResultSetSerializer.SerializedResult actual = actualSide.result();
+            ResultSetSerializer.SerializedResult expected = expectedSide.result();
 
             List<String> actualCols = columnNames(actual);
             List<String> expectedCols = columnNames(expected);
@@ -98,6 +103,8 @@ public class CompareQueriesTool {
             response.put("only_in_expected_count", onlyInExpected.size());
             response.put("only_in_actual", cap(onlyInActual));
             response.put("only_in_expected", cap(onlyInExpected));
+            response.put("intercepted_calls_actual", actualSide.calls());
+            response.put("intercepted_calls_expected", expectedSide.calls());
             if (actual.truncated() || expected.truncated()) {
                 response.put("warning", "One or both result sets were truncated by the row cap; comparison may be incomplete.");
             }
@@ -114,12 +121,15 @@ public class CompareQueriesTool {
             if (criterion != null && !criterion.isBlank()) {
                 session.addCheck(AssertQueryTool.check(criterion, false, "compare error: " + describe(e), null));
             }
-            return error("compare_queries failed: " + describe(e));
+            return errorWithTrace("compare_queries failed: " + describe(e), session);
         }
     }
 
+    /** One side of the comparison: its rows and the JDBC calls that produced them. */
+    private record Side(ResultSetSerializer.SerializedResult result, List<Map<String, Object>> calls) {}
+
     /** The timeout applies per query, not to the pair — each side gets its own budget. */
-    private static ResultSetSerializer.SerializedResult runQuery(ConnectionSession session, String sql, int timeout)
+    private static Side runQuery(ConnectionSession session, String sql, int timeout)
             throws Exception {
         int cap = Config.defaultMaxRows();
         session.beginCall();
@@ -128,8 +138,8 @@ public class CompareQueriesTool {
             try (ResultSet rs = st.executeQuery(sql)) {
                 ResultSetSerializer.SerializedResult r = ResultSetSerializer.serialize(rs, cap);
                 session.setLastCallRowCount(r.rows().size());
-                session.endCall(r.rows().size(), 0);
-                return r;
+                List<InterceptedCall> calls = session.endCall(r.rows().size(), 0);
+                return new Side(r, calls.stream().map(InterceptedCall::toMap).toList());
             }
         }
     }

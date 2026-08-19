@@ -2,6 +2,7 @@ package com.cdata.mcp.jdbc.proxy;
 
 import com.cdata.mcp.jdbc.ConnectionSession;
 import com.cdata.mcp.jdbc.QueryBudget;
+import com.cdata.mcp.jdbc.ReadOnlyGuard;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -36,20 +37,33 @@ public class ProxyResultSet implements InvocationHandler {
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        String name = method.getName();
+
+        // A positioned update is a write, and reaches the backend without any SQL for a tool to see.
+        if (ReadOnlyGuard.isResultSetWrite(name)) {
+            ReadOnlyGuard.checkResultSetWrite(session, name);
+        }
+
         // next() is the only paging call: SQLTimeoutException is a SQLException, so it is
         // declared on next() and propagates without being wrapped as undeclared.
-        if (!method.getName().equals("next")) {
+        if (!name.equals("next")) {
             return ProxyInvoke.call(method, real, args);
         }
 
         QueryBudget budget = session.getBudget();
-        budget.check("fetching rows");
+        budget.check("fetching rows", () -> session.diagnoseTimeout("fetching rows", budget.timeoutSeconds()));
         Object hasMore = ProxyInvoke.call(method, real, args);
+
+        // Rows are counted here so a timeout can report how far the scan got — the difference
+        // between "the driver is paging a lot of data" and "the driver is stuck on one call".
+        if (Boolean.TRUE.equals(hasMore)) session.recordRowFetched();
 
         // A statement cancelled by the watchdog ends iteration by returning false rather
         // than throwing. Without this second check the caller cannot tell a timed-out scan
         // from a complete one, and a truncated result gets reported as the whole answer.
-        if (Boolean.FALSE.equals(hasMore)) budget.check("fetching rows");
+        if (Boolean.FALSE.equals(hasMore)) {
+            budget.check("fetching rows", () -> session.diagnoseTimeout("fetching rows", budget.timeoutSeconds()));
+        }
 
         return hasMore;
     }

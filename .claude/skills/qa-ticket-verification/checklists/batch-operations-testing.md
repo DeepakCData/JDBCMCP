@@ -36,6 +36,13 @@ Verify **all** of:
 | 1.3 | Data landed | `SELECT COUNT(*) WHERE <marker>` = 10; spot-read 2–3 rows for value fidelity (right values in right rows — ordering bugs show up here) |
 | 1.4 | Wire shape | See Tier 3 — count the actual backend calls |
 
+## What the trace shows for a batch
+
+`executeBatch` / `executeLargeBatch` now appear in `intercepted_calls` with a `batch_size` field and
+the summed `row_count`. For a `PreparedStatement`, the `params` shown are the **first** parameter set
+of the batch; `batch_size` tells you how many sets were sent. Batch calls previously produced no
+intercepted call at all, so an empty trace on an older build is not evidence that nothing was sent.
+
 ## Tier 2 — Batch API semantics
 
 - **`getGeneratedKeys()` after `executeBatch()`** (prepare with `RETURN_GENERATED_KEYS`): drivers

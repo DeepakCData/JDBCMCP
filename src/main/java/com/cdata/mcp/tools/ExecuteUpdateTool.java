@@ -68,7 +68,7 @@ public class ExecuteUpdateTool {
                     "session_total_tokens", session.getTotalEstimatedTokens()));
             return ok(response);
         } catch (Exception e) {
-            return error("Update failed: " + describe(e));
+            return errorWithTrace("Update failed: " + describe(e), session);
         }
     }
 }

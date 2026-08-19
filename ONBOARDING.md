@@ -429,7 +429,6 @@ and what the user can ask you to do next.
 | `execute_java` | Run a Java code snippet against the session |
 | `get_metadata` | List tables, columns, types |
 | `list_sessions` | Show all active connections |
-| `get_usage_stats` | Query/row/token stats for a session |
 | `disconnect` | Close a session |
 | `record_check` | Record a named QA assertion |
 | `assert_query` | Run a query and assert on the result |

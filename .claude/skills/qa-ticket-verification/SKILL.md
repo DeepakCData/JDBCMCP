@@ -217,7 +217,7 @@ See **§Test strategies by ticket type** below for concrete query templates per 
 ## Phase 4 — Verify against the database (jdbc-platform tools)
 
 Always follow this sequence — never skip a step:
-`load_driver → connect → [tests] → get_usage_stats → disconnect`
+`load_driver → connect → [tests] → get_test_report → disconnect`
 
 1. **`load_driver`** if the driver isn't registered. Use CData short names (`saperp`,
    `salesforce`, `servicenow`, `googledrive`, …) — the server resolves the class automatically;
@@ -225,8 +225,14 @@ Always follow this sequence — never skip a step:
    If it fails, stop — there is nothing to test.
 
 2. **`connect`** — **default to `read_only: true`** unless a test case explicitly requires a write
-   path. Read-only blocks `execute_update` and write `execute_prepared`, protecting shared and
-   production data. Only set `trust_all_certs` / `set_jvm_proxy` when the engineer asks.
+   path. Read-only is enforced in the JDBC proxy layer, so it covers **every** tool including
+   `execute_java`: only `SELECT`/`WITH`/`EXPLAIN`/`DESCRIBE`/`SHOW` are permitted, and anything else
+   is refused with SQLState `25006`. **`EXEC` and `CALL` are treated as writes** — a procedure body is
+   opaque, and CData procs like `DownloadObjects` have side effects. So a read-only session cannot run
+   stored procedures: if the ticket needs one, connect with `read_only: false` and say so in chat.
+   It is a guard against an accidental write, not a sandbox — snippet code can still reach the
+   underlying connection via `getMetaData().getConnection()` or `unwrap()`.
+   Only set `trust_all_certs` / `set_jvm_proxy` when the engineer asks.
    Reuse the returned `session_id` for every later call.
 
    **Proxy:** Just call `connect` normally with the user's connection string **exactly as given —
@@ -313,7 +319,6 @@ Always follow this sequence — never skip a step:
 ## Phase 5 — Report
 
 - `get_test_report` — Markdown summary (pass/fail per criterion + session stats).
-- `get_usage_stats` — include `total_queries`, `total_intercepted_calls`, `estimated_tokens_used`.
 - `export_results` — write evidence rows to CSV when an attachment is wanted.
 - Summarize the verdict: which acceptance criteria passed/failed, the concrete data behind each,
   and whether the fix from Phase 2 actually does what the ticket asked. If Phase 2 was skipped
@@ -435,6 +440,9 @@ not the display string.
 1. Record `intercepted_calls[*].duration_ms`. 2. Many small calls = N+1. 3. `execute_java` with
 `setQueryTimeout` + wall-clock timing. 4. Compare driver duration vs total elapsed.
 Pass: under the ticket threshold; single backend call, not N+1.
+**On this ticket type a timeout IS the result** — record it via `record_check` and do not raise
+`timeout_seconds` to make it pass. The `HYT00` diagnosis already reports the request count and
+per-request latency you need as evidence; see §When a query times out.
 
 ### New table/column support
 1. Table in `get_metadata` (both styles). 2. `SELECT *` returns, all expected columns present.
@@ -477,10 +485,56 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 
 ---
 
+## When a query times out (`HYT00`)
+
+A timeout is a **result**, not an accident to retry away. The error carries a diagnosis — read it
+before doing anything:
+
+```
+[HYT00] Query exceeded its 30s budget while fetching rows.
+  elapsed: 31.9s (execute() returned in 3.5s, 28.4s spent fetching rows)
+  rows fetched: 0
+  HTTP requests during this call: 10 (30.8s total, avg 3078ms each)
+  shape: row volume / pagination — 10 requests averaging 3078ms each (97% of elapsed) …
+  next: add a WHERE clause or lower max_rows to cut round trips …
+```
+
+The `shape` line is derived from the call's own evidence (execute vs fetch time, rows pulled, and
+the HTTP round trips recorded in the capture since the call began). Act on it in this order:
+
+| `shape` | What it means | Do this |
+|---|---|---|
+| `client-side work` | No HTTP, or HTTP is a small share — the driver is aggregating or filtering locally | **Narrow the query.** Raising the budget buys time for work that scales with the table. |
+| `row volume / pagination` | Many round trips; cost is the page count | **Add a WHERE clause or lower `max_rows`.** If requests scale with rows, that is an N+1 — a finding in its own right. |
+| `backend latency` | One or two genuinely slow calls | **Raising `timeout_seconds` is legitimate here.** State the new value in chat. |
+| `mixed` / `unknown` | Ambiguous, or no capture | Read `intercepted_calls` and the capture from `mitm_log_offset` yourself before deciding. |
+
+**Three rules that override the table:**
+
+1. **Never silently retry at a higher budget.** If the ticket concerns performance, a bigger budget
+   converts a real FAIL into a PASS. When performance is in scope, `record_check` the timeout as the
+   result and stop.
+2. **Retry at most once**, with an explicit `timeout_seconds` you name in chat along with the reason
+   the diagnosis justifies it. Never escalate twice.
+3. **Always report a timeout that occurred**, even when a later narrowed query succeeds. "Needed 90s
+   and 40 round trips to return 12 rows" is evidence the engineer needs, whatever the verdict.
+
+**Known-slow shapes on CData HTTP connectors** — an unfiltered `COUNT(*)` and a bare `SELECT *` on a
+large table are both pathological, because the driver pages the entire table client-side to satisfy
+them. Measured on SFMC `Assets`: `SELECT COUNT(*)` exceeded 30s after 10 requests without returning a
+row, and `SELECT *` spent 6.1s inside a single request. Prefer a filtered count
+(`COUNT(*) … WHERE <key> = …`) or `SELECT TOP n`.
+
+---
+
 ## Common pitfalls
 
-1. **Testing the wrong data** — confirm the repro key exists (`SELECT COUNT(*)`) before validating.
-   If 0, the environment lacks the data; flag it.
+1. **Testing the wrong data** — confirm the repro key exists before validating; if it doesn't, the
+   environment lacks the data, so flag that rather than reporting a failure. Use a **filtered**
+   existence check — `SELECT TOP 1 <key> FROM t WHERE <key> = …`, or `COUNT(*)` with the WHERE
+   clause attached. Never a bare `SELECT COUNT(*) FROM t` on an HTTP connector: the driver pages the
+   whole table client-side to count it, which on SFMC `Assets` blows a 30s budget without returning a
+   single row. See §When a query times out.
 2. **Timeout as a PASS** — 0 rows in 2 ms may be a silent failure; cross-check with a COUNT.
 3. **String equality for numeric columns** — verify the JDBC type with `getBigDecimal`/`getDouble`,
    not the display string.
@@ -527,10 +581,12 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 | `compare_queries` | Diff two result sets (order-insensitive) | `session_id`, `sql_actual`, `sql_expected`, `criterion` |
 | `record_check` | Record a non-SQL pass/fail check | `session_id`, `criterion`, `passed`, `detail`, `sql` |
 | `export_results` | Export a SELECT to CSV (UTF-8, RFC4180) | `session_id`, `sql`, `file_path`, `max_rows` |
-| `get_usage_stats` | Cumulative session stats | `session_id` |
 | `get_test_report` | Markdown pass/fail report | `session_id` |
 | `list_sessions` | List open sessions | _(none)_ |
 | `disconnect` | Close the connection, delete the session's driver log | `session_id`, `keep_logfile` (default false). Response: `logfile_deleted`, `logfile_bytes_freed` |
+
+**Session activity totals** (queries run, rows returned, intercepted calls, JDBC duration, estimated
+tokens) are in the "Session activity" section of `get_test_report` — there is no separate stats tool.
 
 ---
 
@@ -577,7 +633,7 @@ treated as HTTP/cloud and proxied.
 This project's `.claude/settings.json` allowlists every read/list/search tool on Jira
 (`atlassian`), Azure DevOps (`azure-devops`), and `jdbc-platform` (`execute_query`,
 `execute_prepared`, `get_metadata`, `compare_queries`, `assert_query`, `record_check`,
-`export_results`, `list_sessions`, `get_usage_stats`, `get_test_report`), plus read-only shell
+`export_results`, `list_sessions`, `get_test_report`), plus read-only shell
 commands and the read-only `find-linked-prs.ps1` PR-discovery helper. Use these without asking —
 just narrate what you're reading as you go through Phases 1–4. Two different write boundaries apply:
 - **Database side** (`execute_update`, `load_driver`, `connect`/`disconnect`) — needed for testing;

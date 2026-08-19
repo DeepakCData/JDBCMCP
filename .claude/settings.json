@@ -46,7 +46,6 @@
       "mcp__jdbc-platform__execute_prepared",
       "mcp__jdbc-platform__get_metadata",
       "mcp__jdbc-platform__list_sessions",
-      "mcp__jdbc-platform__get_usage_stats",
       "mcp__jdbc-platform__get_test_report",
       "mcp__jdbc-platform__compare_queries",
       "mcp__jdbc-platform__assert_query",

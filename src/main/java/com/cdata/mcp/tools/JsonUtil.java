@@ -1,5 +1,7 @@
 package com.cdata.mcp.tools;
 
+import com.cdata.mcp.jdbc.ConnectionSession;
+import com.cdata.mcp.jdbc.proxy.InterceptedCall;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 
@@ -34,6 +36,27 @@ public class JsonUtil {
     public static McpSchema.CallToolResult error(String message) {
         return McpSchema.CallToolResult.builder()
                 .addTextContent(toJson(Map.of("error", message)))
+                .isError(true)
+                .build();
+    }
+
+    /**
+     * An error that still carries the session's JDBC call trace.
+     *
+     * <p>Failure is when the trace matters most — it holds the driver's own error, the timing, and
+     * the parameters that were bound. Returning a bare {@code {"error": …}} threw all of that away
+     * on precisely the calls being investigated, while the pass criteria are written in terms of
+     * {@code intercepted_calls[*].error}.
+     */
+    public static McpSchema.CallToolResult errorWithTrace(String message, ConnectionSession session) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("error", message);
+        if (session != null) {
+            List<InterceptedCall> calls = session.endCall(0, 0);
+            body.put("intercepted_calls", calls.stream().map(InterceptedCall::toMap).toList());
+        }
+        return McpSchema.CallToolResult.builder()
+                .addTextContent(toJson(body))
                 .isError(true)
                 .build();
     }

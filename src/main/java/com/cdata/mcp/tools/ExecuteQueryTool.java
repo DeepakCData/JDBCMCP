@@ -94,7 +94,7 @@ public class ExecuteQueryTool {
                 }
             }
         } catch (Exception e) {
-            return error("Query failed: " + describe(e));
+            return errorWithTrace("Query failed: " + describe(e), session);
         }
     }
 

@@ -117,7 +117,7 @@ public class ExecutePreparedTool {
             }
             return ok(response);
         } catch (Exception e) {
-            return error("execute_prepared failed: " + describe(e));
+            return errorWithTrace("execute_prepared failed: " + describe(e), session);
         }
     }
 

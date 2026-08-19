@@ -81,6 +81,7 @@ public class SessionManager {
                 // An abandoned session never reaches disconnect, so reclaim its driver log here too —
                 // otherwise the largest logs are exactly the ones nobody cleans up.
                 LogJanitor.deleteSessionLog(s.getLogfilePath());
+                if (s.isJvmProxyApplied()) com.cdata.mcp.tools.ConnectTool.releaseJvmProxy();
             }
         }
     }

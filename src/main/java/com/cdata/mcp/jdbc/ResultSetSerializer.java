@@ -3,9 +3,12 @@ package com.cdata.mcp.jdbc;
 import com.cdata.mcp.config.Config;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -15,10 +18,18 @@ import java.util.Map;
 
 public class ResultSetSerializer {
 
-    // LocalDateTime/LocalTime.toString() omits seconds (and smaller) when they are zero.
-    // These formatters guarantee seconds are always present in the output.
-    private static final DateTimeFormatter TIMESTAMP_FMT = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss");
-    private static final DateTimeFormatter TIME_FMT      = DateTimeFormatter.ofPattern("HH:mm:ss");
+    // LocalDateTime/LocalTime.toString() omits seconds (and smaller) when they are zero, so seconds
+    // are always written explicitly. Fractional seconds are appended only when present: a plain
+    // "HH:mm:ss" pattern silently discarded them, which made millisecond-precision values compare
+    // equal to each other and to whole seconds — the exact class of bug this tool exists to catch.
+    private static final DateTimeFormatter TIMESTAMP_FMT = new DateTimeFormatterBuilder()
+            .appendPattern("uuuu-MM-dd'T'HH:mm:ss")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true)
+            .toFormatter();
+    private static final DateTimeFormatter TIME_FMT = new DateTimeFormatterBuilder()
+            .appendPattern("HH:mm:ss")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true)
+            .toFormatter();
 
     /** truncated = true when more rows were available than the row cap allowed. */
     public record SerializedResult(List<Map<String, Object>> rows,
@@ -57,6 +68,14 @@ public class ResultSetSerializer {
         return new SerializedResult(rows, columns, truncated);
     }
 
+    /**
+     * Convert one cell using the same typing rules as {@link #serialize}, for callers that stream
+     * rows rather than materializing them (export_results).
+     */
+    public static Object cellValue(ResultSet rs, int col, int jdbcType) throws SQLException {
+        return getTypedValue(rs, col, jdbcType, Config.maxCellBytes());
+    }
+
     private static Object getTypedValue(ResultSet rs, int col, int jdbcType, int maxCellBytes) throws SQLException {
         return switch (jdbcType) {
             case Types.TINYINT, Types.SMALLINT, Types.INTEGER -> {
@@ -67,11 +86,13 @@ public class ResultSetSerializer {
                 long v = rs.getLong(col);
                 yield rs.wasNull() ? null : v;
             }
-            case Types.FLOAT, Types.REAL -> {
+            // Only REAL is single-precision. JDBC maps FLOAT to double, so reading it with
+            // getFloat() rounded every SQL FLOAT column to ~7 digits before any assertion saw it.
+            case Types.REAL -> {
                 float v = rs.getFloat(col);
                 yield rs.wasNull() ? null : v;
             }
-            case Types.DOUBLE -> {
+            case Types.FLOAT, Types.DOUBLE -> {
                 double v = rs.getDouble(col);
                 yield rs.wasNull() ? null : v;
             }
@@ -123,14 +144,35 @@ public class ResultSetSerializer {
         return m;
     }
 
-    /** Large text is returned whole when small, or capped with metadata when it exceeds the limit. */
+    /**
+     * Large text is returned whole when small, or capped with metadata when it exceeds the limit.
+     * The budget is UTF-8 bytes, matching the property name and the binary path — comparing
+     * {@code String.length()} against a byte budget let multi-byte text exceed it several times over.
+     */
     private static Object truncateText(String s, int maxCellBytes) {
         if (s == null) return null;
-        if (s.length() <= maxCellBytes) return s;
+        // Fast path: even at UTF-8's worst case (4 bytes/char) this cannot exceed the budget.
+        if (s.length() <= maxCellBytes / 4) return s;
+        byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
+        if (utf8.length <= maxCellBytes) return s;
+
+        String slice = prefixWithinBytes(s, maxCellBytes);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("_truncated", true);
         m.put("char_length", s.length());
-        m.put("data", s.substring(0, maxCellBytes));
+        m.put("byte_length", utf8.length);
+        m.put("data", slice);
         return m;
+    }
+
+    /** Longest prefix of {@code s} whose UTF-8 encoding fits in {@code maxBytes}, on a char boundary. */
+    private static String prefixWithinBytes(String s, int maxBytes) {
+        int lo = 0, hi = Math.min(s.length(), maxBytes);
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            if (s.substring(0, mid).getBytes(StandardCharsets.UTF_8).length <= maxBytes) lo = mid;
+            else hi = mid - 1;
+        }
+        return s.substring(0, lo);
     }
 }

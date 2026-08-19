@@ -1,5 +1,6 @@
 package com.cdata.mcp;
 
+import com.cdata.mcp.log.LogJanitor;
 import com.cdata.mcp.tools.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
@@ -12,6 +13,12 @@ public class Main {
     public static void main(String[] args) throws InterruptedException {
         // Redirect slf4j-simple to stderr so stdout stays clean for MCP JSON-RPC
         System.setProperty("org.slf4j.simpleLogger.logFile", "System.err");
+
+        // Capture housekeeping, before any connect can write to the logs: start this run with a
+        // fresh mitmproxy capture, then clear out stale driver logs. Reported on stderr (never
+        // stdout — that channel is MCP JSON-RPC only).
+        System.err.println("[jdbc-mcp] " + LogJanitor.rotateMitmLog());
+        System.err.println("[jdbc-mcp] " + LogJanitor.sweep().summary());
 
         JacksonMcpJsonMapper jsonMapper = new JacksonMcpJsonMapper(new ObjectMapper());
         StdioServerTransportProvider transport = new StdioServerTransportProvider(jsonMapper);

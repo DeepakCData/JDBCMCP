@@ -20,6 +20,9 @@ package com.cdata.mcp.config;
  *   noProxyDrivers        -Djdbc.mcp.noProxyDrivers      / JDBC_MCP_NO_PROXY_DRIVERS
  *   fileDrivers           -Djdbc.mcp.fileDrivers         / JDBC_MCP_FILE_DRIVERS
  *   driverLogVerbosity    -Djdbc.mcp.logVerbosity        / JDBC_MCP_LOG_VERBOSITY
+ *   logRetentionDays      -Djdbc.mcp.logRetentionDays    / JDBC_MCP_LOG_RETENTION_DAYS
+ *   logMaxTotalMb         -Djdbc.mcp.logMaxTotalMb       / JDBC_MCP_LOG_MAX_TOTAL_MB
+ *   logSweepEnabled       -Djdbc.mcp.logSweep            / JDBC_MCP_LOG_SWEEP
  */
 public final class Config {
 
@@ -79,6 +82,18 @@ public final class Config {
 
     /** CData Verbosity level used when auto-injecting driver request/response logging (1–5). */
     public static int driverLogVerbosity() { return intCfg("jdbc.mcp.logVerbosity", "JDBC_MCP_LOG_VERBOSITY", 5); }
+
+    /** Days a driver log / rotated capture survives the startup sweep before deletion. */
+    public static int logRetentionDays() { return intCfg("jdbc.mcp.logRetentionDays", "JDBC_MCP_LOG_RETENTION_DAYS", 3); }
+
+    /**
+     * Ceiling on the total size of retained logs in MB. Enforced oldest-first after the age pass,
+     * because one verbose session can leave hundreds of MB behind inside the retention window.
+     */
+    public static int logMaxTotalMb() { return intCfg("jdbc.mcp.logMaxTotalMb", "JDBC_MCP_LOG_MAX_TOTAL_MB", 512); }
+
+    /** Master switch for startup capture-log rotation and the retention sweep. */
+    public static boolean logSweepEnabled() { return boolCfg("jdbc.mcp.logSweep", "JDBC_MCP_LOG_SWEEP", true); }
 
     // ---------------------------------------------------------------------
 

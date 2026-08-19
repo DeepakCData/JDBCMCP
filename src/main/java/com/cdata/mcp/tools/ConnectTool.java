@@ -73,6 +73,10 @@ public class ConnectTool {
                         driver's own Logfile=<temp>;Verbosity=5 (for CData-style connections) so requests/responses
                         are still captured to a file — returned as logfile_path. Read that file to analyse the traffic.
 
+                        On the proxied path, mitm_log_path plus mitm_log_offset locate this session's traffic in the
+                        capture log. The log is append-only across sessions, so ALWAYS start reading at
+                        mitm_log_offset — reading from the top returns some earlier session's requests.
+
                         Automatic proxy fallback: if mitmproxy fails to start (mitm_status starts with "skipped:"),
                         the proxied connection itself fails, OR a real-table probe proves the driver is bypassing
                         the proxy (query reached the backend but nothing was captured), the server automatically
@@ -289,6 +293,7 @@ public class ConnectTool {
 
         ConnectionSession session = new ConnectionSession(sessionId);
         session.setReadOnly(readOnly);
+        session.setLogfilePath(logfilePath);
         Connection proxy = ProxyConnection.wrap(real, session);
         session.setProxyConnection(proxy);
         SessionManager.put(sessionId, session);
@@ -303,6 +308,11 @@ public class ConnectTool {
                     Map.entry("proxy_reason",         reason.toString()),
                     Map.entry("mitm_status",          mitmStatus),
                     Map.entry("logfile_path",         logfilePath),
+                    Map.entry("mitm_log_path",        proxyApplied ? Config.mitmLogPath() : ""),
+                    // Byte length of the capture log the instant before this session connected.
+                    // The log is append-only, so reads must start here — from the top they land on
+                    // an earlier session's traffic. Sampled pre-connect, so the handshake is included.
+                    Map.entry("mitm_log_offset",      proxyApplied ? Math.max(0L, mitmSizeBeforeConnect) : 0L),
                     Map.entry("read_only",            readOnly),
                     Map.entry("trust_all_certs",      trustAllCerts || proxyApplied),
                     Map.entry("stripped_proxy_props", strippedProxyProps),

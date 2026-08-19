@@ -93,12 +93,33 @@ connection, and agents must pass connection strings **exactly as given**:
 
 | Channel | When active | Location |
 |---|---|---|
-| mitmproxy JSONL (full request/response) | `proxy_applied=true`, no fallback | `<system-temp>/jdbc_mcp_proxy.jsonl` (override: `JDBC_MCP_MITM_LOG_PATH`) |
+| mitmproxy JSONL (full request/response) | `proxy_applied=true`, no fallback | `mitm_log_path` — `<system-temp>/jdbc_mcp_proxy.jsonl` (override: `JDBC_MCP_MITM_LOG_PATH`) |
 | CData driver log | `proxy_fallback=true` or binary/file drivers with `verbose_log` | `logfile_path` in the `connect` response |
 
 Every `connect` response reports `driver_category`, `proxy_applied`, `mitm_status`,
 `proxy_fallback`, `proxy_fallback_reason`, and `logfile_path` — the agent is required to state
 the active capture channel in chat before running queries.
+
+### Log hygiene — read the capture from `mitm_log_offset`, not from the top
+
+The JSONL capture is **append-only and shared by every session** in a server run, so reading it
+from the start returns some earlier session's traffic. `connect` returns `mitm_log_offset`: the
+file's byte length immediately before that session connected. Start there. (`intercepted_calls`
+on query responses is built in memory per call, so it is never affected by the log's size.)
+
+Both log kinds are cleaned up automatically, since a `Verbosity=5` driver log can reach hundreds
+of MB and the driver rotates its own log at 100 MB without ever pruning:
+
+- **Server start** — the capture JSONL is rotated aside (`jdbc_mcp_proxy-<stamp>.jsonl`) so each
+  run begins empty, then a sweep deletes `jdbc_mcp_*` logs older than
+  `JDBC_MCP_LOG_RETENTION_DAYS` and trims oldest-first until the total fits
+  `JDBC_MCP_LOG_MAX_TOTAL_MB`. Both actions are reported on stderr at boot.
+- **`disconnect`** — deletes that session's driver log and reports `logfile_bytes_freed`. Pass
+  `keep_logfile: true` when the log is evidence you need to keep. Idle-evicted sessions get the
+  same treatment.
+- Set `JDBC_MCP_LOG_SWEEP=false` to disable both rotation and the sweep.
+
+Nothing outside `<temp>/jdbc_mcp_*` is ever touched.
 
 ---
 
@@ -117,6 +138,9 @@ the active capture channel in chat before running queries.
 | Non-proxyable driver list | `JDBC_MCP_NO_PROXY_DRIVERS` | see `Config.java` |
 | File-driver list | `JDBC_MCP_FILE_DRIVERS` | excel,csv,json,xml,parquet,avro,orc |
 | CData log verbosity (1–5) | `JDBC_MCP_LOG_VERBOSITY` | 5 |
+| Log retention (days) | `JDBC_MCP_LOG_RETENTION_DAYS` | 3 |
+| Log footprint cap (MB) | `JDBC_MCP_LOG_MAX_TOTAL_MB` | 512 |
+| Startup rotation + sweep | `JDBC_MCP_LOG_SWEEP` | true |
 
 Each also has a `-Djdbc.mcp.*` system-property form — see
 [Config.java](src/main/java/com/cdata/mcp/config/Config.java).

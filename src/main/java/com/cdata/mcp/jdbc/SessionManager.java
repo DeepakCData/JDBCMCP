@@ -1,6 +1,7 @@
 package com.cdata.mcp.jdbc;
 
 import com.cdata.mcp.config.Config;
+import com.cdata.mcp.log.LogJanitor;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -77,6 +78,9 @@ public class SessionManager {
                 } catch (Exception ignored) {
                     // best-effort close on eviction
                 }
+                // An abandoned session never reaches disconnect, so reclaim its driver log here too —
+                // otherwise the largest logs are exactly the ones nobody cleans up.
+                LogJanitor.deleteSessionLog(s.getLogfilePath());
             }
         }
     }

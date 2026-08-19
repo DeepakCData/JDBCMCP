@@ -14,6 +14,10 @@ public class ConnectionSession {
     private Connection proxyConnection;
     private boolean readOnly;
 
+    // CData driver log this session writes to (empty when the session captures via the proxy).
+    // Remembered so disconnect can reclaim it instead of leaving it in temp forever.
+    private String logfilePath = "";
+
     private final long createdAt = System.currentTimeMillis();
     private volatile long lastAccessed = System.currentTimeMillis();
 
@@ -46,6 +50,9 @@ public class ConnectionSession {
 
     public boolean isReadOnly() { return readOnly; }
     public void setReadOnly(boolean readOnly) { this.readOnly = readOnly; }
+
+    public String getLogfilePath() { return logfilePath; }
+    public void setLogfilePath(String logfilePath) { this.logfilePath = (logfilePath != null) ? logfilePath : ""; }
 
     public void touch() { this.lastAccessed = System.currentTimeMillis(); }
     public long getLastAccessed() { return lastAccessed; }

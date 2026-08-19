@@ -268,8 +268,21 @@ Always follow this sequence — never skip a step:
 
    This is not optional. The engineer needs to know what is capturing traffic before any queries
    run, so they can investigate the log if a query behaves unexpectedly. When the proxy is active,
-   raw HTTP request/response pairs are in `<system-temp>/jdbc_mcp_proxy.jsonl` (override via
-   `JDBC_MCP_MITM_LOG_PATH`). When fallback fired, read `logfile_path` with the Read tool instead.
+   raw HTTP request/response pairs are in `mitm_log_path` (`<system-temp>/jdbc_mcp_proxy.jsonl` by
+   default, override via `JDBC_MCP_MITM_LOG_PATH`). When fallback fired, read `logfile_path` with
+   the Read tool instead.
+
+   **Never read the capture JSONL from the top.** It is append-only and shared by every session on
+   this server run, so page 1 is some earlier session's traffic. The server rotates it at startup
+   and `connect` returns `mitm_log_offset` — the file's byte length the instant before this session
+   connected. Everything from that offset onward is yours. Read the *tail*, seek to the offset, or
+   filter by the `ts` field against your session's start time; never trust a page number into that
+   file. If you find yourself reading entries that reference tables or endpoints you never queried,
+   you are reading someone else's session — go back to the offset.
+
+   `intercepted_calls` on each query response is **not** affected: it is built per call in memory,
+   so per-query assertions stay correct regardless of the log's size. Only raw-log reads need the
+   offset.
 
 3. **`get_metadata`** — **confirm real table/column names before writing SQL**; don't assume names
    from the ticket text. Use `metadata_style: "cdata"` for richer detail (keys, nullability,
@@ -335,6 +348,23 @@ a driver crash needing its own ticket.
 
 - `disconnect` when done (verify `"status": "closed"`). Use `list_sessions` to find and close any
   orphaned sessions. Always disconnect even if earlier steps failed.
+- **Logs:** `disconnect` deletes the session's driver log (`logfile_path`) and reports
+  `logfile_bytes_freed`. A `Verbosity=5` log can reach hundreds of MB, so extract any request /
+  response evidence you need into the report **before** disconnecting. Pass `keep_logfile: true`
+  only when the log file itself has to survive for the ticket — and say so in chat, with its path,
+  so the engineer knows it is there.
+- **Footprint check** — when a run produced heavy verbose logging (long sessions, large result
+  sets, `verbose_log: true`), check what is left behind in the temp dir and report the number:
+
+  ```bash
+  powershell -NoProfile -Command "$f=Get-ChildItem \"$env:TEMP\jdbc_mcp_*\" -File; '{0} files, {1:N1} MB' -f $f.Count, (($f|Measure-Object Length -Sum).Sum/1MB)"
+  ```
+
+  The server sweeps automatically at startup (deletes logs older than
+  `JDBC_MCP_LOG_RETENTION_DAYS`, default 3 days, then trims oldest-first past
+  `JDBC_MCP_LOG_MAX_TOTAL_MB`, default 512 MB) — but that only runs when the server restarts. If
+  the footprint is over ~1 GB during a long-lived server, say so and offer to clear it; do not
+  delete files outside `jdbc_mcp_*` in temp, and never delete a log belonging to a live session.
 
 ---
 
@@ -461,6 +491,11 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
    always: call `connect` normally and let the platform handle it.
 5. **`proxy_fallback: true` and not knowing where traffic went** — read `logfile_path` (driver log)
    instead of the JSONL. `proxy_fallback_reason` says which trigger fired. Session is still live.
+5b. **Reading another session's traffic** — the capture JSONL is append-only and shared, so paging
+   into it from the top yields entries from earlier runs and produces confident, wrong conclusions
+   ("the driver sent this request" — it didn't, that was last week). Start at `mitm_log_offset`
+   from `connect`, or match the `ts` field against your session. Suspect this whenever the entries
+   mention tables or endpoints you never touched.
 6. **`execute_update` vs SELECT** — `execute_update` is DML/DDL only; SELECT uses `execute_query`/
    `execute_prepared`. An UPDATE hitting 0 rows is usually a bug.
 7. **Forgetting metadata on schema tickets** — a value fix and a type fix both look fine in `rows`;
@@ -482,7 +517,7 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 | Tool | Use for | Key inputs |
 |---|---|---|
 | `load_driver` | Load a JDBC JAR | `jar_path`, `driver_name` (or `driver_class`) |
-| `connect` | Open a connection, get `session_id` | `connection_string`, `driver_name`, `read_only`, `use_proxy` (`auto`\|`always`\|`never`), `verbose_log`, `trust_all_certs`. Response: `proxy_applied`, `proxy_fallback`, `proxy_fallback_reason`, `mitm_status`, `logfile_path`, `driver_category`, `driver_version` |
+| `connect` | Open a connection, get `session_id` | `connection_string`, `driver_name`, `read_only`, `use_proxy` (`auto`\|`always`\|`never`), `verbose_log`, `trust_all_certs`. Response: `proxy_applied`, `proxy_fallback`, `proxy_fallback_reason`, `mitm_status`, `logfile_path`, `mitm_log_path`, `mitm_log_offset` (start raw-log reads here), `driver_category`, `driver_version` |
 | `execute_query` | SELECT/EXEC → rows + intercepted calls | `session_id`, `sql`, `max_rows`, `timeout_seconds` |
 | `execute_prepared` | Parameterized SQL via PreparedStatement | `session_id`, `sql`, `params`, `max_rows` |
 | `execute_update` | DML/DDL (rejected on read-only) | `session_id`, `sql` |
@@ -495,7 +530,7 @@ a page boundary), and that the translated `$filter` matches the SQL WHERE.
 | `get_usage_stats` | Cumulative session stats | `session_id` |
 | `get_test_report` | Markdown pass/fail report | `session_id` |
 | `list_sessions` | List open sessions | _(none)_ |
-| `disconnect` | Close the connection | `session_id` |
+| `disconnect` | Close the connection, delete the session's driver log | `session_id`, `keep_logfile` (default false). Response: `logfile_deleted`, `logfile_bytes_freed` |
 
 ---
 

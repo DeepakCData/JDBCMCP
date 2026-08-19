@@ -10,6 +10,7 @@ import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,6 +38,7 @@ public class DriverLoader {
             Map.entry("netsuite",         "cdata.jdbc.netsuite.NetSuiteDriver"),
             Map.entry("odatadriver",      "cdata.jdbc.odatadriver.ODataDriver"),
             Map.entry("oracle",           "cdata.jdbc.oracle.OracleDriver"),
+            Map.entry("oracleoci",        "cdata.jdbc.oracleoci.OracleOCIDriver"),
             Map.entry("oraclesalescloud", "cdata.jdbc.oraclesalescloud.OracleSalesCloudDriver"),
             Map.entry("outreach",         "cdata.jdbc.outreach.OutreachDriver"),
             Map.entry("paypal",           "cdata.jdbc.paypal.PayPalDriver"),
@@ -56,19 +58,27 @@ public class DriverLoader {
             Map.entry("zohocrm",          "cdata.jdbc.zohocrm.ZohoCRMDriver")
     );
 
-    // One classloader per JAR path, reused across loads. A loaded driver keeps
-    // referencing its loader for the life of the JVM, so we must NOT close it;
-    // caching avoids leaking a fresh loader on every load_driver call.
+    /** What a load actually registered, and where it came from. */
+    public record Loaded(String driverClass, String driverJar, List<String> jars) {}
+
+    // One classloader per JAR *set*, reused across loads. A loaded driver keeps referencing its
+    // loader for the life of the JVM, so we must NOT close it; caching avoids leaking a fresh
+    // loader on every load_driver call. The key covers every jar, so adding a companion jar
+    // produces a new loader rather than silently reusing one that lacks it.
     private static final ConcurrentHashMap<String, URLClassLoader> LOADER_CACHE = new ConcurrentHashMap<>();
 
-    private static URLClassLoader loaderFor(String jarPath) {
-        return LOADER_CACHE.computeIfAbsent(jarPath, p -> {
+    private static URLClassLoader loaderFor(List<String> jars) {
+        String key = String.join(java.io.File.pathSeparator, jars);
+        return LOADER_CACHE.computeIfAbsent(key, k -> {
             try {
-                URL jarUrl = new java.io.File(p).toURI().toURL();
-                return new URLClassLoader(new URL[]{jarUrl}, Thread.currentThread().getContextClassLoader());
+                URL[] urls = new URL[jars.size()];
+                for (int i = 0; i < jars.size(); i++) {
+                    urls[i] = new java.io.File(jars.get(i)).toURI().toURL();
+                }
+                return new URLClassLoader(urls, Thread.currentThread().getContextClassLoader());
             } catch (Exception e) {
                 String detail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                throw new RuntimeException("Cannot open JAR: " + p + " — " + detail, e);
+                throw new RuntimeException("Cannot open JAR set: " + k + " — " + detail, e);
             }
         });
     }
@@ -87,38 +97,37 @@ public class DriverLoader {
     }
 
     /**
-     * Load a driver from a JAR. Resolution order: the class the JAR declares in its own
-     * META-INF/services/java.sql.Driver, then the known CData class registry. Returns the
-     * fully-qualified class name actually registered.
+     * Load a driver from a JAR set. Resolution order: the classes the JARs declare in their own
+     * META-INF/services/java.sql.Driver, then the known CData class registry.
      *
      * ServiceLoader is deliberately NOT used for discovery. It walks the classloader delegation
-     * chain, so it returns a driver sitting on the server's launch classpath (e.g. the ojdbc jar)
+     * chain, so it returns a driver sitting on the server's launch classpath (e.g. an ojdbc jar)
      * and reports it as loaded from the requested JAR — leaving an engineer testing a completely
      * different driver than the one they asked for.
      */
-    public static String load(String jarPath) throws Exception {
-        requireReadableJar(jarPath);
-        List<String> declared = declaredDrivers(jarPath);
+    public static Loaded load(List<String> jars) throws Exception {
+        List<String> resolved = normalize(jars);
+        for (String jar : resolved) requireReadableJar(jar);
 
-        // 1. What the JAR declares about itself is definitive.
-        for (String className : declared) {
+        // 1. What the JARs declare about themselves is definitive.
+        for (String className : declaredDrivers(resolved)) {
             try {
-                return loadByClass(jarPath, className);
+                return loadResolved(resolved, className);
             } catch (ClassNotFoundException ignored) {
-                // Declared but absent — malformed JAR; fall through to the registry.
+                // Declared but absent — malformed JAR; keep looking.
             }
         }
 
-        // 2. Try the known CData classes until one loads *from this JAR*.
+        // 2. Try the known CData classes until one loads *from this JAR set*.
         for (String className : KNOWN_DRIVERS.values()) {
             try {
-                return loadByClass(jarPath, className);
+                return loadResolved(resolved, className);
             } catch (ClassNotFoundException | ForeignDriverException ignored) {
-                // Not in this JAR, or it resolved to a copy elsewhere on the classpath.
+                // Not in these JARs, or it resolved to a copy elsewhere on the classpath.
             }
         }
 
-        throw new Exception("No java.sql.Driver found in: " + jarPath
+        throw new Exception("No java.sql.Driver found in: " + resolved
                 + " (checked META-INF/services/java.sql.Driver and the known CData class names). "
                 + "Provide driver_name or driver_class explicitly.");
     }
@@ -126,46 +135,116 @@ public class DriverLoader {
     /**
      * Load a driver by short name (e.g. "sharepoint") — resolves to the full class automatically.
      *
-     * When the resolved name is not in the JAR, the JAR's own declaration is consulted before
-     * giving up: the fallback pattern only capitalizes the first letter, so "csv" yields
-     * CsvDriver where the real class is CSVDriver. A declared class is accepted only when its
-     * package matches the requested driver, so pointing "salesforce" at a SharePoint JAR stays
-     * an error rather than a silent substitution.
+     * When the resolved name is not in the JAR set, their own declarations are consulted before
+     * giving up: the fallback pattern only capitalizes the first letter, so "csv" yields CsvDriver
+     * where the real class is CSVDriver. A declared class is accepted only when its package matches
+     * the requested driver, so pointing "salesforce" at a SharePoint JAR stays an error rather than
+     * a silent substitution.
      */
-    public static String loadByName(String jarPath, String driverName) throws Exception {
+    public static Loaded loadByName(List<String> jars, String driverName) throws Exception {
         String className = resolveClassName(driverName);
         if (className == null) throw new Exception("Cannot resolve driver class for: " + driverName);
+        List<String> resolved = normalize(jars);
+        for (String jar : resolved) requireReadableJar(jar);
         try {
-            return loadByClass(jarPath, className);
+            return loadResolved(resolved, className);
         } catch (ClassNotFoundException notInJar) {
             String key = driverName.toLowerCase().replaceAll("[^a-z0-9]", "");
-            List<String> declared = declaredDrivers(jarPath);
+            List<String> declared = declaredDrivers(resolved);
             for (String candidate : declared) {
                 if (candidate.startsWith("cdata.jdbc." + key + ".")) {
-                    return loadByClass(jarPath, candidate);
+                    return loadResolved(resolved, candidate);
                 }
             }
             throw new Exception("Driver '" + driverName + "' (expected class " + className + ") is not in "
-                    + jarPath + ". That JAR declares: " + declared
+                    + resolved + ". Those JARs declare: " + declared
                     + ". Pass driver_class explicitly, or point jar_path at the right JAR.");
         }
     }
 
     /**
-     * Load a driver by its fully-qualified class name, which must live in the given JAR.
-     * Returns that class name.
+     * Load a driver by its fully-qualified class name, which must live in one of the given JARs.
      */
-    public static String loadByClass(String jarPath, String className) throws Exception {
-        requireReadableJar(jarPath);
-        URLClassLoader loader = loaderFor(jarPath);
+    public static Loaded loadByClass(List<String> jars, String className) throws Exception {
+        List<String> resolved = normalize(jars);
+        for (String jar : resolved) requireReadableJar(jar);
+        return loadResolved(resolved, className);
+    }
+
+    /** Loads and registers {@code className}, verifying it came from the supplied JARs. */
+    private static Loaded loadResolved(List<String> jars, String className) throws Exception {
+        URLClassLoader loader = loaderFor(jars);
         Class<?> clazz = loader.loadClass(className);
         // The loader delegates to the server's classpath, so loadClass succeeding does not mean the
-        // class came from this JAR. Refuse anything that didn't — loading a driver is only
+        // class came from these JARs. Refuse anything that didn't — loading a driver is only
         // meaningful if it is the driver under test.
-        requireFromJar(clazz, jarPath);
+        String origin = requireFromAny(clazz, jars);
         Driver driver = (Driver) clazz.getDeclaredConstructor().newInstance();
         DriverManager.registerDriver(new DriverShim(driver));
-        return className;
+        return new Loaded(className, origin, jars);
+    }
+
+    // ---- single-JAR convenience overloads -------------------------------------------------
+
+    public static Loaded load(String jarPath) throws Exception {
+        return load(List.of(jarPath));
+    }
+
+    public static Loaded loadByName(String jarPath, String driverName) throws Exception {
+        return loadByName(List.of(jarPath), driverName);
+    }
+
+    public static Loaded loadByClass(String jarPath, String className) throws Exception {
+        return loadByClass(List.of(jarPath), className);
+    }
+
+    // --------------------------------------------------------------------------------------
+
+    /**
+     * A hint for the "driver needs a companion JAR" case, or null when the failure is something else.
+     *
+     * <p>Several CData drivers are thin wrappers that require the vendor's own JDBC/native JAR
+     * alongside them — Oracle OCI needs the Oracle client classes, for instance. The symptom is not
+     * a connection error but a missing class surfacing at connect time, which reads as an unrelated
+     * crash unless you know to look for it. Scans the whole cause chain, since drivers wrap it.
+     */
+    public static String companionJarHint(Throwable t) {
+        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Throwable c = t; c != null && seen.add(c); c = c.getCause()) {
+            String missing = missingClassOf(c);
+            if (missing != null) {
+                return "The driver could not find " + missing + ". This usually means the connector"
+                        + " needs a companion JAR that was not loaded — several CData drivers (Oracle OCI"
+                        + " and other native/thin wrappers) require the vendor's own JDBC or client JAR"
+                        + " alongside the CData one. Re-run load_driver with the CData JAR as jar_path"
+                        + " and the vendor JAR in extra_jars, then connect again.";
+            }
+        }
+        return null;
+    }
+
+    /** The missing class named by a linkage failure, or null when {@code t} is not one. */
+    private static String missingClassOf(Throwable t) {
+        if (t instanceof ClassNotFoundException || t instanceof NoClassDefFoundError) {
+            String msg = t.getMessage();
+            if (msg == null || msg.isBlank()) return t.getClass().getSimpleName();
+            // NoClassDefFoundError uses slashes: com/foo/Bar
+            return msg.trim().replace('/', '.');
+        }
+        if (t instanceof UnsatisfiedLinkError) {
+            return "a native library (" + (t.getMessage() != null ? t.getMessage().trim() : "unnamed") + ")";
+        }
+        return null;
+    }
+
+    /** Distinct, non-blank jar paths in the order given. */
+    private static List<String> normalize(List<String> jars) throws Exception {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (jars != null) {
+            for (String j : jars) if (j != null && !j.isBlank()) out.add(j.trim());
+        }
+        if (out.isEmpty()) throw new Exception("At least one jar_path is required");
+        return new ArrayList<>(out);
     }
 
     /**
@@ -185,38 +264,45 @@ public class DriverLoader {
         }
     }
 
-    /** Driver class names the JAR declares in META-INF/services/java.sql.Driver, in file order. */
-    private static List<String> declaredDrivers(String jarPath) {
-        List<String> out = new ArrayList<>();
-        try (JarFile jar = new JarFile(jarPath)) {
-            JarEntry entry = jar.getJarEntry("META-INF/services/java.sql.Driver");
-            if (entry == null) return out;
-            try (BufferedReader r = new BufferedReader(
-                    new InputStreamReader(jar.getInputStream(entry), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = r.readLine()) != null) {
-                    int hash = line.indexOf('#');
-                    if (hash >= 0) line = line.substring(0, hash);
-                    line = line.trim();
-                    if (!line.isEmpty()) out.add(line);
+    /** Driver class names the JARs declare in META-INF/services/java.sql.Driver, in jar order. */
+    private static List<String> declaredDrivers(List<String> jars) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String jarPath : jars) {
+            try (JarFile jar = new JarFile(jarPath)) {
+                JarEntry entry = jar.getJarEntry("META-INF/services/java.sql.Driver");
+                if (entry == null) continue;
+                try (BufferedReader r = new BufferedReader(
+                        new InputStreamReader(jar.getInputStream(entry), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        int hash = line.indexOf('#');
+                        if (hash >= 0) line = line.substring(0, hash);
+                        line = line.trim();
+                        if (!line.isEmpty()) out.add(line);
+                    }
                 }
+            } catch (Exception ignored) {
+                // Unreadable or not a JAR — callers fall back to the class registry.
             }
-        } catch (Exception ignored) {
-            // Unreadable or not a JAR — callers fall back to the class registry.
         }
-        return out;
+        return new ArrayList<>(out);
     }
 
-    /** Throws unless {@code clazz} was actually defined by the given JAR. */
-    private static void requireFromJar(Class<?> clazz, String jarPath) throws ForeignDriverException {
+    /**
+     * Returns the supplied JAR that defined {@code clazz}, or throws when it came from elsewhere.
+     * Any of the requested JARs is acceptable — the point is to exclude the server's own classpath,
+     * not to insist the driver live in the first one.
+     */
+    private static String requireFromAny(Class<?> clazz, List<String> jars) throws ForeignDriverException {
         String origin = codeSourceOf(clazz);
         if (origin == null) {
-            // No code source (a JVM built-in, or a loader that hides it) — not from the JAR.
-            throw new ForeignDriverException(clazz.getName(), "the JVM/bootstrap classpath", jarPath);
+            // No code source (a JVM built-in, or a loader that hides it) — not from these JARs.
+            throw new ForeignDriverException(clazz.getName(), "the JVM/bootstrap classpath", jars);
         }
-        if (!sameFile(origin, jarPath)) {
-            throw new ForeignDriverException(clazz.getName(), origin, jarPath);
+        for (String jar : jars) {
+            if (sameFile(origin, jar)) return jar;
         }
+        throw new ForeignDriverException(clazz.getName(), origin, jars);
     }
 
     private static String codeSourceOf(Class<?> clazz) {
@@ -240,13 +326,13 @@ public class DriverLoader {
     }
 
     /**
-     * A class that resolved to a driver outside the requested JAR — almost always one already on
+     * A class that resolved to a driver outside the requested JARs — almost always one already on
      * the server's launch classpath. Reports both locations so the cause is obvious.
      */
     public static class ForeignDriverException extends Exception {
-        public ForeignDriverException(String className, String actualOrigin, String jarPath) {
-            super(className + " was loaded from " + actualOrigin + ", not from the requested JAR ("
-                    + jarPath + "). That class is already on the server classpath, so loading it here "
+        public ForeignDriverException(String className, String actualOrigin, List<String> jars) {
+            super(className + " was loaded from " + actualOrigin + ", not from the requested JAR(s) ("
+                    + jars + "). That class is already on the server classpath, so loading it here "
                     + "would register a driver other than the one under test.");
         }
     }

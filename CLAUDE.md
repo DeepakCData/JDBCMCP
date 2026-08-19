@@ -4,6 +4,13 @@
 runbook (preflight checks, build, mitmproxy, MCP registration). README.md has the human-facing
 overview plus the proxy and log-capture rules.
 
+**Follow ONBOARDING.md's numbered sequence exactly, top to bottom.** It opens with a fixed
+step order, entry/exit gates per phase, hard stops, and a required final-report format. Ask
+permission for each mutating command, but do not choose the order, skip ahead, or let the user
+pick which step comes next — improvised ordering is why setups drifted between machines. Two
+gates matter most: never register the MCP server before the JAR is built, and never verify
+before Claude Code has been restarted.
+
 For JDBC driver testing and Jira ticket QA, use the **qa-ticket-verification** skill — it contains
 the full operational guide (phases, tool workflow, proxy/capture handling, test strategies,
 pitfalls, and CData internals). Invoke it whenever a QA engineer asks to test, verify, validate,

@@ -7,7 +7,7 @@ metadata, capture the driver's HTTP traffic through an auto-managed mitmproxy, a
 evidence-backed pass/fail reports for Jira tickets (via the bundled `qa-ticket-verification`
 Claude skill).
 
-**15 tools:** `load_driver`, `connect`, `execute_query`, `execute_update`, `execute_prepared`,
+**14 tools:** `load_driver`, `connect`, `execute_query`, `execute_update`, `execute_prepared`,
 `execute_java`, `get_metadata`, `list_sessions`, `disconnect`, `record_check`,
 `assert_query`, `compare_queries`, `get_test_report`, `export_results`.
 
@@ -68,6 +68,23 @@ have run at least once, and Java must be on PATH.
   without PR review at your choice.
 
 ---
+
+## Drivers that need two JARs
+
+Most connectors load from a single CData JAR. A connector that wraps a vendor driver does not:
+Oracle OCI and other native/thin wrappers need the vendor's own JDBC or client JAR on the same
+classloader. Pass the CData JAR as `jar_path` and the vendor JAR in `extra_jars`:
+
+```json
+{ "jar_path": ".../lib/cdata.jdbc.oracleoci.jar", "extra_jars": ["C:/path/to/ojdbc11.jar"] }
+```
+
+Do **not** add vendor JARs to the server's own launch classpath instead. Drivers are loaded at
+runtime per call, and a driver sitting on the launch classpath is rejected rather than registered —
+otherwise `load_driver` could report a completely different driver as loaded. The `load_driver`
+response names `driver_jar`, the JAR that actually defined the registered class, so what is under
+test is never in doubt. When a connector needs a companion JAR and does not have one, `connect`
+fails with a missing class and the error says exactly that.
 
 ## Proxy & traffic-capture rules (read before your first connect)
 

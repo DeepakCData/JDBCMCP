@@ -224,6 +224,33 @@ Always follow this sequence — never skip a step:
    otherwise pass `driver_class`. Verify `"status": "loaded"` and a non-null `driver_class`.
    If it fails, stop — there is nothing to test.
 
+   **Check `driver_jar` in the response**, not just `status`. It names which JAR actually defined the
+   registered class. A class that resolved to a copy on the server's own classpath is rejected rather
+   than reported as loaded, so `driver_jar` is the proof that the connector under test is the one
+   running.
+
+   **Some drivers need two JARs.** A CData connector that wraps a vendor driver cannot work from its
+   own JAR alone — Oracle OCI and other native/thin wrappers need the vendor's JDBC or client JAR
+   (`ojdbc11.jar`, an Instant Client JAR, a proprietary DB2/Informix JAR) on the same classloader.
+   Pass the CData JAR as `jar_path` and the vendor JAR(s) in `extra_jars`:
+
+   ```
+   load_driver  jar_path: …/lib/cdata.jdbc.oracleoci.jar
+                extra_jars: ["C:/path/to/ojdbc11.jar"]
+   ```
+
+   Two situations call for this, and both are recognisable without being told:
+   - **The engineer hands you more than one JAR for a single driver.** That is what the second JAR is
+     for — do not guess which one to use or load them separately. `jar_path` is the CData JAR,
+     `extra_jars` carries the rest.
+   - **`connect` fails with a missing class** (`ClassNotFoundException`, `NoClassDefFoundError`,
+     `UnsatisfiedLinkError`) naming a vendor package. That is not a connection problem and retrying
+     will not fix it; the error itself says to re-run `load_driver` with the companion JAR. Ask the
+     engineer for the vendor JAR path if you do not have it.
+
+   `extra_jars` supplies dependencies only — the registered driver must still come from one of the
+   JARs you passed, which is why `driver_jar` is worth reading back.
+
 2. **`connect`** — **default to `read_only: true`** unless a test case explicitly requires a write
    path. Read-only is enforced in the JDBC proxy layer, so it covers **every** tool including
    `execute_java`: only `SELECT`/`WITH`/`EXPLAIN`/`DESCRIBE`/`SHOW` are permitted, and anything else
@@ -570,7 +597,7 @@ row, and `SELECT *` spent 6.1s inside a single request. Prefer a filtered count
 
 | Tool | Use for | Key inputs |
 |---|---|---|
-| `load_driver` | Load a JDBC JAR | `jar_path`, `driver_name` (or `driver_class`) |
+| `load_driver` | Load a JDBC JAR | `jar_path`, `driver_name` (or `driver_class`), `extra_jars` (companion/vendor JARs, e.g. ojdbc11 for Oracle OCI). Response: `driver_class`, `driver_jar` (which JAR defined it), `jars_loaded` |
 | `connect` | Open a connection, get `session_id` | `connection_string`, `driver_name`, `read_only`, `use_proxy` (`auto`\|`always`\|`never`), `verbose_log`, `trust_all_certs`. Response: `proxy_applied`, `proxy_fallback`, `proxy_fallback_reason`, `mitm_status`, `logfile_path`, `mitm_log_path`, `mitm_log_offset` (start raw-log reads here), `driver_category`, `driver_version` |
 | `execute_query` | SELECT/EXEC → rows + intercepted calls | `session_id`, `sql`, `max_rows`, `timeout_seconds` |
 | `execute_prepared` | Parameterized SQL via PreparedStatement | `session_id`, `sql`, `params`, `max_rows` |
@@ -601,11 +628,13 @@ the Jira key (e.g. `DRIVERS-59445: ...`); that convention isn't always followed,
 why the dev-status API is preferred. The Jira↔ADO link is provided by the "Git Integration for
 Jira by GitKraken" app (dev-status `applicationType = oAuth-com.xiplink.jira.git.jira_git_plugin`).
 
-**Driver short names** (for `load_driver` / `connect`): `acumatica`, `bigquery`, `box`,
+**Driver short names** (for `load_driver` / `connect`): `acumatica`, `bigquery`, `box`, `csv`,
 `dynamics365`, `dynamicscrm`, `excel`, `googledrive`, `googlesheets`, `hubspot`, `jira`, `marketo`,
-`mongodb`, `mysql`, `netsuite`, `odatadriver`, `oracle`, `oraclesalescloud`, `outreach`, `paypal`,
-`postgresql`, `rest`, `saperp`, `salesforce`, `servicenow`, `sharepoint`, `slack`, `snowflake`,
-`sqlserver`, `stripe`, `xero`, `zendesk`, `zohocrm`.
+`mongodb`, `mysql`, `netsuite`, `odatadriver`, `oracle`, `oracleoci`, `oraclesalescloud`, `outreach`,
+`paypal`, `postgresql`, `rest`, `saperp`, `salesforce`, `servicenow`, `sfmarketingcloud`,
+`sharepoint`, `slack`, `snowflake`, `sqlserver`, `stripe`, `xero`, `zendesk`, `zohocrm`.
+A name outside the list is tried as `cdata.jdbc.<name>.<Name>Driver` and then matched against the
+JAR's own declaration, so odd capitalisation (`CSVDriver`, `SFMarketingCloudDriver`) resolves anyway.
 
 **System views** (with `metadata_style: "cdata"`):
 

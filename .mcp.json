@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-"jdbc-platform": {
+    "jdbc-platform": {
       "command": "java",
-      "args": ["-cp", "target/jdbc-platform-1.0-SNAPSHOT.jar;C:\\Program Files\\CData\\ojdbc11-23.26.3.0.0.jar", "com.cdata.mcp.Main"]
+      "args": ["-jar", "target/jdbc-platform-1.0-SNAPSHOT.jar"]
     }
   }
 }

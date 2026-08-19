@@ -18,11 +18,20 @@ public class LoadDriverTool {
                         Load a JDBC driver JAR at runtime. Provide ONE of:
                           • driver_name  — short CData name (e.g. "sharepoint", "salesforce", "saperp") — class resolved automatically.
                           • driver_class — fully-qualified class (e.g. "cdata.jdbc.sharepoint.SharePointDriver").
-                        If neither is provided, the JAR is scanned via ServiceLoader then by trying all known CData class names.
-                        Known short names: acumatica, bigquery, box, dynamics365, dynamicscrm, excel, googledrive, googlesheets,
-                          hubspot, jira, marketo, mongodb, mysql, netsuite, odatadriver, oracle, oraclesalescloud,
-                          outreach, paypal, postgresql, rest, saperp, salesforce, servicenow, sharepoint,
-                          slack, snowflake, sqlserver, stripe, xero, zendesk, zohocrm.""")
+                        If neither is provided, the class the JAR declares in META-INF/services/java.sql.Driver is
+                        used, falling back to the known CData class names.
+
+                        The registered class is always one defined by the JAR you passed. A class that resolves to a
+                        copy on the server's own classpath is rejected rather than reported as loaded, so a successful
+                        response means the driver under test is what got registered.
+
+                        Known short names: acumatica, bigquery, box, csv, dynamics365, dynamicscrm, excel, googledrive,
+                          googlesheets, hubspot, jira, marketo, mongodb, mysql, netsuite, odatadriver, oracle,
+                          oraclesalescloud, outreach, paypal, postgresql, rest, saperp, salesforce, servicenow,
+                          sfmarketingcloud, sharepoint, slack, snowflake, sqlserver, stripe, xero, zendesk, zohocrm.
+                        A name outside this list is tried as cdata.jdbc.<name>.<Name>Driver, then matched against the
+                        JAR's own declaration — so unusual capitalization (CSVDriver, SFMarketingCloudDriver) resolves
+                        without needing driver_class.""")
                 .inputSchema(schema(
                         Map.of(
                                 "jar_path",    strProp("Absolute path to the JDBC driver .jar file"),
@@ -53,7 +62,7 @@ public class LoadDriverTool {
                 resolvedFrom = "driver_name:" + driverName;
             } else {
                 loaded = DriverLoader.load(jarPath);
-                resolvedFrom = "ServiceLoader / scan";
+                resolvedFrom = "jar_declaration / scan";
             }
             // driver_class reports the class actually registered (not the requested name).
             return ok(Map.of("status", "loaded", "driver_class", loaded, "resolved_from", resolvedFrom));

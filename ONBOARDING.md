@@ -15,7 +15,7 @@ and CData connectors (SAP ERP, Salesforce, SharePoint, ServiceNow, Snowflake, an
 SQL, inspect metadata, capture the driver's HTTP traffic via an auto-managed mitmproxy, and do
 evidence-backed QA on Jira tickets (via the bundled `qa-ticket-verification` skill).
 
-When fully set up, the user gets a `jdbc-platform` MCP server with 15 tools and the QA skill
+When fully set up, the user gets a `jdbc-platform` MCP server with 14 tools and the QA skill
 available in their Claude Code sessions.
 
 ---
@@ -47,8 +47,12 @@ Follow these strictly while running the setup:
    **up front** using the ready-made ask in the "First — collect the org credentials" section
    below (the org endpoints are fixed and pre-filled). When the user hands you a token, **you**
    store it in the safe git-ignored place — don't make them edit files.
-6. **Report, then proceed.** After the preflight, show the user a status summary (present / missing
-   / needs action) before doing anything. Let them decide the order.
+6. **Report, then proceed in the fixed order.** After the preflight, show the user the status block
+   (present / missing / needs action) before changing anything. **You still ask permission for every
+   mutating command, but you do not ask the user which step to do next, and you do not reorder the
+   sequence.** The order below encodes real dependencies; letting each run pick its own path is why
+   different users end up with different setups. If the user asks to skip a step, do it, and record
+   the skip verbatim in the final report.
 7. **Reads don't need permission, writes do.** This repo ships a checked-in
    `.claude/settings.json` that allowlists read-only operations — file/process inspection
    (`Get-ChildItem`, `cat`, `grep`, `git status/log/diff`, …) and every read/list/search tool on
@@ -64,7 +68,60 @@ Follow these strictly while running the setup:
 
 ---
 
-## First — collect the org credentials (ask the user right now)
+## The setup sequence — fixed order, no exceptions
+
+**Run these in exactly this order.** Do not reorder, do not run ahead, do not skip a step because
+it "looks" done — confirm with the stated check. Each step lists what must be true to enter it and
+what must be true to leave it. If you cannot satisfy an exit condition, say so and stop there
+rather than moving on.
+
+| # | Step | Enter only when | Leave only when |
+|---|---|---|---|
+| 1 | Read `.claude/skills/qa-ticket-verification/SKILL.md` end to end | — | You have read it. No commands have run yet. |
+| 2 | Ask for the three org credentials (one message — see Step 2 below) | 1 done | The ask has been *sent*. **Do not wait for a reply** — continue to 3 while they fetch tokens. |
+| 3 | Phase 0 preflight — all 12 checks | 2 sent | Every check has a result **and** the status block is printed |
+| 4 | Phase 1 — build the JAR | Check 1 (Java 17+) passed | `target/jdbc-platform-1.0-SNAPSHOT.jar` exists |
+| 5 | Phase 2 — mitmproxy | 4 done | `mitmdump --version` reports, **or** the user declined and you recorded it |
+| 6 | Phase 3 — register the MCP server | JAR exists (4) | `claude mcp list` shows `jdbc-platform` |
+| 7 | **HALT — restart Claude Code** | 6 done | The user confirms they restarted |
+| 8 | Phase 5 — companion servers + credentials | Restarted (7); creds from 2 in hand | Each of Jira MCP / ADO MCP / Jira token is verified working, **or** declined and recorded |
+| 9 | Phase 4 — copy the skill outside the repo | 8 done | Copied, **or** skipped (the default) |
+| 10 | Phase 6 — verify end to end | Restarted (7) | `list_sessions` returned |
+| 11 | Final report | 10 done | Printed using the §Final report template |
+
+### Hard stops
+
+These are not judgement calls:
+
+- **Java 17+ missing (check 1) → STOP.** Nothing downstream can work. Tell the user what to install
+  and end the run. Do not build, register, or continue to Phase 2.
+- **The build fails (step 4) → STOP.** Surface the real error verbatim. Do not register a server
+  whose JAR does not exist.
+- **Never run step 10 before the restart in step 7.** A server registered in this session is not
+  loaded in this session. Verifying before the restart produces a false failure and sends you
+  debugging a working setup.
+- **Never register before the JAR exists.** `claude mcp list` will show the server as failed and
+  you will spend the next ten minutes on the wrong problem.
+
+### Decisions that are already made
+
+Previous runs diverged because these were left open. They are not open:
+
+| Question | The answer — do not re-litigate |
+|---|---|
+| MCP scope? | **Project scope** — the shipped `.mcp.json`. Only offer user scope if the user says they want the server outside this repo. |
+| Install mitmproxy? | **Offer it once.** If declined, record `capture: driver log only` and move on. Do not ask twice or treat it as blocking. |
+| Copy the skill to the user's home? | **Skip by default.** The project-scoped skill already works inside this repo. Only copy if the user asks for it elsewhere. |
+| Set up Jira / ADO / the Jira token? | **Recommend all three** to anyone doing ticket QA. If declined, record the limitation from Phase 5 and move on. |
+| Which phases to run? | **All of them, in order.** Phases with nothing to do still get a line in the final report. |
+
+---
+
+## Step 2 — Collect the org credentials (ask immediately, then keep going)
+
+This is step 2 of the sequence above: it runs *after* reading the skill and *before* the
+preflight. Send the ask and move straight on to Phase 0 — the user fetches tokens while you
+run the checks. Blocking here is wasted time.
 
 Everyone who runs this server is inside the **same CData org**, so the endpoints are known ahead of
 time — you only need three things from the user. **Ask for all three at the very start**, before
@@ -110,6 +167,10 @@ dev-status PR lookup and (if needed) an API-token-based Jira MCP, so one token c
 
 ## Phase 0 — Preflight detection (run these now)
 
+> **Gate** — Enter: the credential ask (step 2) has been sent. Leave: all 12 checks have a recorded
+> result and the status block below has been printed. Run **all** of them, including the ones you
+> expect to pass; a skipped check is how a broken setup gets discovered three steps too late.
+
 Run each check and record the result. Translate the command to the user's actual shell if needed.
 
 | # | What to check | Command (Windows / PowerShell) | Pass condition |
@@ -153,13 +214,20 @@ Jira API token   [missing] not set — QA skill can't auto-find linked PRs
 Repo path        C:\Users\<them>\...\jdbc-mcp-server
 ```
 
-Then walk through only the phases that have gaps.
+Then continue with **Phase 1 onward in order**. A phase with nothing to do is still entered,
+confirmed, and given a line in the final report — that is what makes two runs comparable.
+Do not ask the user which gap to address first.
 
 ---
 
-## Phase 1 — Build the server JAR (if missing)
+## Phase 1 — Build the server JAR
 
-The repo ships a bundled Maven wrapper — no separate Maven install needed.
+> **Gate** — Enter: check 1 (Java 17+) passed. Leave: `target/jdbc-platform-1.0-SNAPSHOT.jar`
+> exists. If the build fails, **STOP** and surface the error verbatim — do not continue to Phase 3.
+
+The repo ships a bundled Maven wrapper — no separate Maven install needed. Build even if a JAR is
+already present but the repo has newer commits than it, since a stale JAR silently runs old tool
+behaviour; when in doubt, rebuild.
 
 Command to propose (ask permission first):
 ```powershell
@@ -172,7 +240,10 @@ Produces `target/jdbc-platform-1.0-SNAPSHOT.jar`. If the build fails, the usual 
 
 ---
 
-## Phase 2 — Install mitmproxy (if missing)
+## Phase 2 — Install mitmproxy
+
+> **Gate** — Enter: Phase 1 produced the JAR. Leave: `mitmdump --version` reports a version, **or**
+> the user declined and you recorded `capture: driver log only` for the final report. Offer once.
 
 The server auto-manages a local mitmproxy to capture HTTP traffic from CData drivers. If
 `mitmdump` isn't on PATH, capture silently falls back to driver-native logging — so this is
@@ -188,6 +259,12 @@ tell them, don't try to install Python silently.
 ---
 
 ## Phase 3 — Register the MCP server
+
+> **Gate** — Enter: the JAR exists. Leave: `claude mcp list` shows `jdbc-platform`. Then go straight
+> to the restart halt (step 7) — **not** to Phase 6.
+
+**Default: project scope.** Use the shipped `.mcp.json`. Only register at user scope if the user
+says they want the server outside this repo — do not present it as an open question otherwise.
 
 **This repo ships a project-scope `.mcp.json`** (launches `java -jar target/jdbc-platform-1.0-SNAPSHOT.jar`
 relative to the repo root). If the user opened this folder in Claude Code and approved the
@@ -215,7 +292,10 @@ Tell the user to **restart Claude Code** afterward so the server loads.
 
 ---
 
-## Phase 4 — Install the QA skill (optional)
+## Phase 4 — Install the QA skill outside the repo
+
+> **Gate** — Enter: Phase 5 is done. Leave: copied, or skipped. **Skipping is the default** — the
+> project-scoped skill already works inside this repo. Only act if the user asks for it elsewhere.
 
 If the user wants the Jira QA workflow available **outside this repo**, copy the skill to their
 personal skills folder. Ask permission, then:
@@ -231,6 +311,12 @@ works here.
 ---
 
 ## Phase 5 — Companion MCP servers + things only the user can provide
+
+> **Gate** — Enter: Claude Code has been restarted (step 7) and you hold whatever credentials the
+> user sent in step 2. Leave: each of the three (Jira MCP, Azure DevOps MCP, Jira API token) is
+> either **verified working** or **explicitly declined and recorded**. "Registered" is not the same
+> as "working" — re-run preflight check 12 for ADO, and confirm the Jira token by running
+> `find-linked-prs.ps1` against any real ticket key.
 
 The QA skill needs, besides `jdbc-platform`: **Jira (Atlassian) MCP** to read tickets, **Azure
 DevOps MCP** to read the implemented fix, and a **Jira classic API token** to *find* the linked PR.
@@ -400,6 +486,10 @@ You'll pass the JAR path to `load_driver` at runtime — you don't install it.
 
 ## Phase 6 — Verify it works
 
+> **Gate** — Enter: Claude Code has been restarted since registration. Leave: `list_sessions`
+> returned successfully. **Do not run this before the restart** — the server registered in the
+> previous session is not loaded in it, and a failure here before a restart means nothing.
+
 Once the MCP server is registered and Claude Code restarted, confirm the connection end-to-end:
 
 1. Confirm the server is live — call the `list_sessions` tool. An empty session list means the
@@ -410,14 +500,41 @@ Once the MCP server is registered and Claude Code restarted, confirm the connect
    "Proxy behavior" below). Pass the connection string exactly as given and do not try to bypass
    the override.
 
-Report a clear final status: what's set up, what's still pending (e.g. "drivers not yet provided"),
-and what the user can ask you to do next.
+### Final report
+
+**Print exactly these lines, in this order, every time.** Every row gets a value — `[ok]`,
+`[missing]`, `[declined]`, or `[skipped]` with the reason. Two users who ran the same setup should
+see the same shape, which is the point:
+
+```
+SETUP COMPLETE — jdbc-platform
+
+Java                 [ok] 21.0.2
+Server JAR           [ok] built at <path>
+mitmproxy            [ok] 11.0.0            | or [declined] capture: driver log only
+MCP registration     [ok] project scope via .mcp.json
+Restart confirmed    [ok]
+Server responding    [ok] list_sessions returned 0 sessions
+QA skill             [ok] project scope     | or [ok] also copied to ~/.claude/skills
+Jira MCP             [ok] verified          | or [declined] cannot read tickets
+Azure DevOps MCP     [ok] verified (projects listed)  | or [declined] cannot read PR diffs
+Jira API token       [ok] verified via find-linked-prs.ps1  | or [missing] no auto PR discovery
+Driver JARs          [pending] user has not provided any yet
+
+Not done, and why:
+  - <verbatim list of every skip / decline / failure, or "nothing">
+
+You can now ask me to: <the next actions actually available given the above>
+```
+
+Do not summarise in prose instead. Do not omit rows that are `[ok]`. If something failed, it
+appears under "Not done, and why" with the real error — never silently dropped.
 
 ---
 
 # Reference (for the agent during operation)
 
-## The 15 tools
+## The 14 tools
 
 | Tool | What it does |
 |---|---|

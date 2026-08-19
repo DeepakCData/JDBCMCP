@@ -7,7 +7,7 @@ metadata, capture the driver's HTTP traffic through an auto-managed mitmproxy, a
 evidence-backed pass/fail reports for Jira tickets (via the bundled `qa-ticket-verification`
 Claude skill).
 
-**15 tools:** `load_driver`, `connect`, `execute_query`, `execute_update`, `execute_prepared`,
+**14 tools:** `load_driver`, `connect`, `execute_query`, `execute_update`, `execute_prepared`,
 `execute_java`, `get_metadata`, `list_sessions`, `disconnect`, `record_check`,
 `assert_query`, `compare_queries`, `get_test_report`, `export_results`.
 

@@ -107,13 +107,26 @@ public class ConnectionSession {
         return -1L;
     }
 
+    /**
+     * Byte range of the capture log covering the call that just ran, so the caller can read exactly
+     * its traffic instead of searching the shared log by timestamp. Null when nothing was captured
+     * (no proxy on this session), so the field simply does not appear rather than reading as zero.
+     */
+    public Map<String, Object> captureRange() {
+        if (captureOffsetAtCallStart < 0) return null;
+        long to = CaptureLog.currentLength();
+        if (to < 0) return null;
+        CaptureLog.Scan scan = CaptureLog.scan(captureOffsetAtCallStart, to);
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("capture_from", captureOffsetAtCallStart);
+        m.put("capture_to", to);
+        // Entry count doubles as evidence: 0 means the driver answered without touching the backend.
+        if (scan != null) m.put("capture_entries", scan.entries());
+        return m;
+    }
+
     private static long currentCaptureLength() {
-        try {
-            java.io.File f = new java.io.File(com.cdata.mcp.config.Config.mitmLogPath());
-            return f.exists() ? f.length() : 0L;
-        } catch (Exception e) {
-            return -1L;
-        }
+        return CaptureLog.currentLength();
     }
 
     /** Set by the tool layer once the call's timeout is known; null clears the bound. */

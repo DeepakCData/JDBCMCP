@@ -61,6 +61,29 @@ public class JsonUtil {
                 .build();
     }
 
+    /**
+     * The {@code _meta} block every SQL-executing tool returns.
+     *
+     * <p>estimated_tokens is {@code responseChars / 4} — a rule-of-thumb proxy for how much context
+     * this one result will consume, not a tokenizer count. It under-reports for JSON and base64, and
+     * covers only what this server returned: not ticket text, PR diffs, the skill, or your prompts.
+     * Use it to decide whether to lower max_rows, not as a context budget.
+     *
+     * <p>capture_from / capture_to / capture_entries locate this call's HTTP traffic in the shared
+     * capture log, so it can be read by byte range instead of searched by timestamp.
+     *
+     * @param extra tool-specific entries (row_cap, …); may be null
+     */
+    public static Map<String, Object> meta(ConnectionSession session, long tokens, Map<String, Object> extra) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("estimated_tokens", tokens);
+        m.put("session_total_tokens", session.getTotalEstimatedTokens());
+        if (extra != null) m.putAll(extra);
+        Map<String, Object> range = session.captureRange();
+        if (range != null) m.putAll(range);
+        return m;
+    }
+
     public static McpSchema.JsonSchema schema(Map<String, Object> properties, List<String> required) {
         return new McpSchema.JsonSchema("object", properties, required, false, null, null);
     }

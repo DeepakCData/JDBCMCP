@@ -1,15 +1,5 @@
 package com.cdata.mcp.jdbc;
 
-import com.cdata.mcp.config.Config;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Explains <em>why</em> a query ran out of its wall-clock budget.
@@ -28,11 +18,6 @@ import java.util.regex.Pattern;
 public final class TimeoutDiagnosis {
 
     private TimeoutDiagnosis() {}
-
-    /** Never scan more than this much capture log; a timeout should not become a second stall. */
-    private static final long MAX_SCAN_BYTES = 32L * 1024 * 1024;
-
-    private static final Pattern DURATION = Pattern.compile("\"duration_ms\"\\s*:\\s*(\\d+)");
 
     /** What the capture log shows for one tool call. */
     private record Traffic(int requests, long totalMs) {}
@@ -146,38 +131,10 @@ public final class TimeoutDiagnosis {
         return Math.min(1.0, (double) t.totalMs() / elapsedMs);
     }
 
-    /** Count capture entries written since {@code fromOffset} and sum their round-trip times. */
+    /** Entries written since {@code fromOffset}, and their total round-trip time. */
     private static Traffic scanCapture(long fromOffset) {
-        if (fromOffset < 0) return null;
-        Path log = Path.of(Config.mitmLogPath());
-        try {
-            if (!Files.exists(log)) return new Traffic(0, 0);
-            long size = Files.size(log);
-            if (size <= fromOffset) return new Traffic(0, 0);
-            if (size - fromOffset > MAX_SCAN_BYTES) return null;   // too big to scan cheaply
-
-            int requests = 0;
-            long totalMs = 0;
-            try (RandomAccessFile raf = new RandomAccessFile(log.toFile(), "r")) {
-                raf.seek(fromOffset);
-                try (BufferedReader r = new BufferedReader(new InputStreamReader(
-                        new java.io.FileInputStream(raf.getFD()), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = r.readLine()) != null) {
-                        if (line.isBlank()) continue;
-                        requests++;
-                        Matcher m = DURATION.matcher(line);
-                        if (m.find()) {
-                            try { totalMs += Long.parseLong(m.group(1)); } catch (NumberFormatException ignored) {}
-                        }
-                    }
-                }
-            }
-            return new Traffic(requests, totalMs);
-        } catch (Exception e) {
-            // Diagnosis is best-effort; never let it mask the timeout it is describing.
-            return null;
-        }
+        CaptureLog.Scan scan = CaptureLog.scan(fromOffset, -1);
+        return (scan == null) ? null : new Traffic(scan.entries(), scan.totalMs());
     }
 
     private static String ms(long v) {

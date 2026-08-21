@@ -88,8 +88,7 @@ public class ExecuteQueryTool {
                     response.put("intercepted_calls", calls.stream().map(InterceptedCall::toMap).collect(Collectors.toList()));
                     long tokens = TokenEstimator.estimate(toJson(response));
                     session.addEstimatedTokens(tokens);
-                    response.put("_meta", Map.of("estimated_tokens", tokens,
-                            "session_total_tokens", session.getTotalEstimatedTokens()));
+                    response.put("_meta", meta(session, tokens, null));
                     return ok(response);
                 }
             }
@@ -113,10 +112,7 @@ public class ExecuteQueryTool {
 
         long tokens = TokenEstimator.estimate(toJson(response));
         session.addEstimatedTokens(tokens);
-        response.put("_meta", Map.of(
-                "estimated_tokens", tokens,
-                "session_total_tokens", session.getTotalEstimatedTokens(),
-                "row_cap", maxRows));
+        response.put("_meta", meta(session, tokens, Map.of("row_cap", maxRows)));
         return ok(response);
     }
 

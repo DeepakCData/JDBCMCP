@@ -116,8 +116,7 @@ public class ExecuteJavaTool {
 
         long tokens = TokenEstimator.estimate(toJson(response));
         session.addEstimatedTokens(tokens);
-        response.put("_meta", Map.of("estimated_tokens", tokens,
-                "session_total_tokens", session.getTotalEstimatedTokens()));
+        response.put("_meta", meta(session, tokens, null));
 
         return ok(response);
     }

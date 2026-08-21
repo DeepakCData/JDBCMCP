@@ -125,7 +125,27 @@ token to a file in the system temp directory. Bodies are capped at `JDBC_MCP_MIT
 with `resp_body_truncated` marking what was cut; an uncapped body turned a single download into a
 100 MB log line. Override the header list with `JDBC_MCP_MITM_REDACT_HEADERS`.
 
-### Log hygiene — read the capture from `mitm_log_offset`, not from the top
+### Finding a query's traffic — by byte range, not by timestamp
+
+Every `execute_*` response carries the byte range of the capture log covering that one call:
+
+```json
+"_meta": { "estimated_tokens": 96, "capture_from": 4058, "capture_to": 6062, "capture_entries": 1 }
+```
+
+Read exactly that range of `mitm_log_path` and you have that query's HTTP traffic and nothing else.
+Ranges are contiguous, so consecutive calls never overlap. `capture_entries: 0` proves the driver
+answered locally without a backend request — the signature of a predicate or aggregate it could not
+push down.
+
+Searching by the `ts` field is the wrong instinct: it is UTC (so it will not match your wall clock),
+and it cannot separate two sessions running at once. Use `mitm_log_offset` from `connect` only when
+you want the whole session rather than one call.
+
+`estimated_tokens` in the same block is response characters ÷ 4 — a rough gauge of how much context
+a result will consume, not a tokenizer count, and it covers only what this server returned.
+
+### Log hygiene — the capture is shared, so never read it from the top
 
 The JSONL capture is **append-only and shared by every session** in a server run, so reading it
 from the start returns some earlier session's traffic. `connect` returns `mitm_log_offset`: the

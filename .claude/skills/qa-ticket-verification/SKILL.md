@@ -305,13 +305,22 @@ Always follow this sequence — never skip a step:
    default, override via `JDBC_MCP_MITM_LOG_PATH`). When fallback fired, read `logfile_path` with
    the Read tool instead.
 
-   **Never read the capture JSONL from the top.** It is append-only and shared by every session on
-   this server run, so page 1 is some earlier session's traffic. The server rotates it at startup
-   and `connect` returns `mitm_log_offset` — the file's byte length the instant before this session
-   connected. Everything from that offset onward is yours. Read the *tail*, seek to the offset, or
-   filter by the `ts` field against your session's start time; never trust a page number into that
-   file. If you find yourself reading entries that reference tables or endpoints you never queried,
-   you are reading someone else's session — go back to the offset.
+   **Never read the capture JSONL from the top, and never search it by timestamp.** It is
+   append-only and shared by every session on this server run, so page 1 is some earlier session's
+   traffic, and the `ts` field is UTC while you are almost certainly thinking in local time.
+
+   Two byte offsets locate traffic exactly, so no searching is needed:
+
+   | Use | Where it comes from | Covers |
+   |---|---|---|
+   | **`capture_from` / `capture_to`** | `_meta` of every `execute_*` response | **just that one call** — prefer this |
+   | `mitm_log_offset` | the `connect` response | the whole session, for when you want everything |
+
+   So to see what a specific query sent, read exactly `capture_from`–`capture_to` of `mitm_log_path`.
+   `capture_entries` says how many HTTP exchanges are in that range, and **`capture_entries: 0` is a
+   finding in itself** — it proves the driver answered without touching the backend, which is the
+   signature of a filter or aggregate it could not push down. If you find yourself reading entries
+   that reference tables you never queried, you ignored the range.
 
    `intercepted_calls` on each query response is **not** affected: it is built per call in memory,
    so per-query assertions stay correct regardless of the log's size. Only raw-log reads need the
@@ -534,7 +543,7 @@ the HTTP round trips recorded in the capture since the call began). Act on it in
 | `client-side work` | No HTTP, or HTTP is a small share — the driver is aggregating or filtering locally | **Narrow the query.** Raising the budget buys time for work that scales with the table. |
 | `row volume / pagination` | Many round trips; cost is the page count | **Add a WHERE clause or lower `max_rows`.** If requests scale with rows, that is an N+1 — a finding in its own right. |
 | `backend latency` | One or two genuinely slow calls | **Raising `timeout_seconds` is legitimate here.** State the new value in chat. |
-| `mixed` / `unknown` | Ambiguous, or no capture | Read `intercepted_calls` and the capture from `mitm_log_offset` yourself before deciding. |
+| `mixed` / `unknown` | Ambiguous, or no capture | Read `intercepted_calls` and the failing call's `capture_from`–`capture_to` range yourself before deciding. |
 
 **Three rules that override the table:**
 
@@ -574,9 +583,9 @@ row, and `SELECT *` spent 6.1s inside a single request. Prefer a filtered count
    instead of the JSONL. `proxy_fallback_reason` says which trigger fired. Session is still live.
 5b. **Reading another session's traffic** — the capture JSONL is append-only and shared, so paging
    into it from the top yields entries from earlier runs and produces confident, wrong conclusions
-   ("the driver sent this request" — it didn't, that was last week). Start at `mitm_log_offset`
-   from `connect`, or match the `ts` field against your session. Suspect this whenever the entries
-   mention tables or endpoints you never touched.
+   ("the driver sent this request" — it didn't, that was last week). Read the `capture_from`–
+   `capture_to` range from the response's `_meta` instead; fall back to `mitm_log_offset` only when
+   you want the whole session. Suspect this whenever the entries mention tables you never touched.
 6. **`execute_update` vs SELECT** — `execute_update` is DML/DDL only; SELECT uses `execute_query`/
    `execute_prepared`. An UPDATE hitting 0 rows is usually a bug.
 7. **Forgetting metadata on schema tickets** — a value fix and a type fix both look fine in `rows`;
@@ -614,6 +623,14 @@ row, and `SELECT *` spent 6.1s inside a single request. Prefer a filtered count
 
 **Session activity totals** (queries run, rows returned, intercepted calls, JDBC duration, estimated
 tokens) are in the "Session activity" section of `get_test_report` — there is no separate stats tool.
+
+**`_meta` on every `execute_*` response** carries `estimated_tokens` / `session_total_tokens` plus
+`capture_from` / `capture_to` / `capture_entries`.
+
+`estimated_tokens` is **response characters ÷ 4** — a rule of thumb, not a tokenizer count. It
+under-reports for JSON and base64, and counts only what this server returned: not the ticket text,
+the PR diff, the skill, or your prompts. Use it to decide whether to lower `max_rows`. Do not quote
+it as a context budget, and do not report it as if it were measured.
 
 ---
 

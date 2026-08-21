@@ -33,7 +33,13 @@ public class ExecutePreparedTool {
                         params is a JSON array of values. Each entry may be a scalar (string, number, boolean)
                         or an object with {"type": "int|long|double|float|boolean|string|null", "value": ...}
                         to force a specific JDBC setter. If scalar, type is inferred from JSON type.
-                        Write statements (non-SELECT) are rejected on read_only sessions. SELECTs are capped by max_rows.""")
+                        Write statements (non-SELECT) are rejected on read_only sessions. SELECTs are capped by max_rows.
+
+                        Reading the driver's HTTP traffic: _meta.capture_from/capture_to are byte offsets into
+                        mitm_log_path (returned by connect) bounding THIS call's requests. Read that byte range
+                        rather than searching the capture by timestamp or reading it from the top — it is
+                        append-only and shared by every session, and its ts field is UTC.
+                        capture_entries: 0 means the driver answered locally, with no backend request.""")
                 .inputSchema(schema(
                         Map.of(
                                 "session_id", strProp("Session ID from connect"),

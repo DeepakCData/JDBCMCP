@@ -30,7 +30,13 @@ public class ExecuteQueryTool {
                         For EXEC: if the procedure returns a result set it is serialized normally; if it
                         returns only an update count (or void) update_count is returned instead.
                         Results are capped (max_rows) and the query is bounded by timeout_seconds.
-                        If more rows exist than the cap, "truncated": true is returned.""")
+                        If more rows exist than the cap, "truncated": true is returned.
+
+                        Reading the driver's HTTP traffic: _meta.capture_from/capture_to are byte offsets into
+                        mitm_log_path (returned by connect) bounding THIS call's requests. Read that byte range
+                        rather than searching the capture by timestamp or reading it from the top — it is
+                        append-only and shared by every session, and its ts field is UTC.
+                        capture_entries: 0 means the driver answered locally, with no backend request.""")
                 .inputSchema(schema(
                         Map.of(
                                 "session_id",      strProp("Session ID from connect"),

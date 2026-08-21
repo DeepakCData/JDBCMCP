@@ -23,7 +23,13 @@ public class ExecuteUpdateTool {
                 .name("execute_update")
                 .description("""
                         Execute a SQL INSERT, UPDATE, DELETE, or DDL statement. Returns the update count.
-                        Rejected if the session was opened read_only. Bounded by timeout_seconds.""")
+                        Rejected if the session was opened read_only. Bounded by timeout_seconds.
+
+                        Reading the driver's HTTP traffic: _meta.capture_from/capture_to are byte offsets into
+                        mitm_log_path (returned by connect) bounding THIS call's requests. Read that byte range
+                        rather than searching the capture by timestamp or reading it from the top — it is
+                        append-only and shared by every session, and its ts field is UTC.
+                        capture_entries: 0 means the driver answered locally, with no backend request.""")
                 .inputSchema(schema(
                         Map.of(
                                 "session_id",      strProp("Session ID from connect"),

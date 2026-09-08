@@ -16,7 +16,15 @@ the full operational guide (phases, tool workflow, proxy/capture handling, test 
 pitfalls, and CData internals). Invoke it whenever a QA engineer asks to test, verify, validate,
 or reproduce a Jira ticket or its fix.
 
-The skill also bundles **operation-level checklists** under
+For **full driver testing** — pushdown, the whole SQL surface (LIKE/IN/GROUP BY/HAVING/aggregates,
+string and date functions), data types, and whether the driver behaves correctly when the backend
+does *not* support a construct — use the **driver-conformance** skill. It compares three contracts:
+what the driver declares (`sys_sqlinfo`, and the RSD when the table has one), what the vendor API
+actually supports, and what the driver actually sends on the wire. Invoke it for "run a full driver
+test", "conformance test this driver", "check pushdown", or a sweep across a driver's tables. Use
+qa-ticket-verification instead when the scope is one ticket.
+
+The ticket skill also bundles **operation-level checklists** under
 `.claude/skills/qa-ticket-verification/checklists/` (SELECT, INSERT, UPDATE, DELETE, batch
 operations, stored procedures). When someone asks for vague operation testing — "run select tests
 on this table", "test inserts", "check batch ops" — execute the matching checklist instead of

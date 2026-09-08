@@ -125,14 +125,20 @@ execute_query  SELECT TOP 3 Id, Name FROM Assets WHERE TypeId = 207
 ### `pageSize` is the tell
 
 This is the single most useful signal in the whole exercise. Compare the page size in the request
-against the `TOP`/`max_rows` you asked for:
+against the row limit you asked for:
 
 | What you see | What it means |
 |---|---|
-| `pageSize` == your `TOP` | fully pushed — filter, projection and limit all reached the API. Cheap. |
-| `pageSize` == the connector maximum (e.g. 500) | **the driver is scanning.** Something is being evaluated locally, so it cannot honour your `TOP` until it has looked at everything |
+| page size == your `LIMIT` | fully pushed — filter, projection and limit all reached the API. Cheap. |
+| page size == the connector maximum (e.g. 500, or `maxResults=5000`) | **the driver is scanning.** Something is being evaluated locally, so it cannot honour your limit until it has looked at everything |
 | `capture_entries` climbing with row count | pagination — cost scales with table size, not result size |
 | `capture_entries: 0` | answered entirely locally, no backend request at all |
+
+**Write the limit as `LIMIT n` (and `LIMIT n OFFSET m`), not `TOP n`.** Both push identically for
+the limit itself, but `TOP` has no offset concept, so it cannot exercise — or expose — how the
+driver handles paging. `LIMIT`/`OFFSET` is also what real clients emit: BI tools, ORMs and JDBC
+pagination all generate it, so it is the path customers actually hit. See §2 of
+[`sql-surface.md`](sql-surface.md) for the offset checks.
 
 Verified on SFMC `Assets`:
 

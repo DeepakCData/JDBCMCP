@@ -22,7 +22,7 @@ truth, and none of them is the result set.
 | Source | What it tells you | Where it lives |
 |---|---|---|
 | **`sys_sqlinfo`** | The driver's declared SQL surface — operators, functions, GROUP BY, aggregates | `SELECT * FROM sys_sqlinfo` (every CData driver, always) |
-| **The RSD** | Per column: which operators push down, ORDER BY support, the API-side field name, required/insertable, declared type | `<driver install>/db/<Schema>/<Table>.rsd` — **when it exists** |
+| **The RSD** | Per column: which operators push down, ORDER BY support, the API-side field name, required/insertable, declared type | `<install>/db/<Schema>/` as `<Table>.rsd`, `<Table>Internal.rsd`, `<Table>CloudInternal.rsd` or `<Table>ServerInternal.rsd` — **when one exists** |
 | **The vendor API docs** | What the backend actually supports, and its limits | Vendor documentation. Ask for the link if you do not have it — do not guess. |
 
 And the fourth thing, which is not a contract but the evidence: **the capture**. Every
@@ -35,10 +35,22 @@ RSDs are per table, and a driver can have both kinds. ServiceNow ships ~6 RSDs f
 tables; MySQL, Oracle, SAP HANA and Shopify ship none at all. **Check per table:**
 
 ```
-does <install>/db/<Schema>/<Table>.rsd exist?
-   yes -> Tier A: declared per-column contract available
-   no  -> Tier B: sys_sqlinfo + metadata only; derive the rest by probing
+look for ANY of these under <install>/db/**/ :
+    <Table>.rsd                  e.g. Sprints.rsd, Boards.rsd
+    <Table>Internal.rsd          e.g. IssuesInternal.rsd
+    <Table>CloudInternal.rsd     e.g. ProjectsCloudInternal.rsd, UsersCloudInternal.rsd
+    <Table>ServerInternal.rsd    e.g. WorklogsServerInternal.rsd
+
+   found     -> Tier A: declared per-column contract available
+   none      -> Tier B: sys_sqlinfo + metadata only; derive the rest by probing
 ```
+
+**Match all four spellings, not just `<Table>.rsd`.** CData routinely backs an exposed table with an
+`…Internal` RSD, and ships separate `…CloudInternal` / `…ServerInternal` variants selected by
+deployment type. Checking only the plain name mis-tiers those tables as dynamic and throws away the
+declared contract you actually have. On the Jira driver, matching only `<Table>.rsd` finds 2 of the
+7 core tables; matching all four finds all 7. When both Cloud and Server variants exist, the one
+that applies is decided by the target deployment — a `*.atlassian.net` URL is Cloud.
 
 `sys_sqlinfo` is available in **both** tiers. It is the one contract you always have.
 
@@ -59,7 +71,7 @@ Roughly 40 rows. The ones that matter:
 
 | Key | Why it matters |
 |---|---|
-| `SUPPORTED_OPERATORS` | The operators pushed to the API. **Anything absent is client-side.** |
+| `SUPPORTED_OPERATORS` | The operators the driver *guarantees* it pushes. Absence is a hypothesis, not a fact — see the floor note below |
 | `GROUP_BY`, `COUNT`, `AGGREGATE_FUNCTIONS` | `NO`/empty means aggregation happens locally, over the whole table |
 | `STRING_FUNCTIONS`, `NUMERIC_FUNCTIONS`, `TIMEDATE_FUNCTIONS` | Which functions the engine understands at all |
 | `SUBQUERIES`, `OUTER_JOINS` | Usually `NO` on SaaS connectors |
@@ -80,9 +92,17 @@ TIMEDATE_FUNCTIONS    CURRENT_DATE,CURRENT_TIMESTAMP,MONTH,YEAR
 SUPPORTSENHANCEDSQL   true
 ```
 
-Read that and you already know: `LIKE`, `NOT IN`, `BETWEEN`, `GROUP BY`, `HAVING`, `COUNT`, `SUM`
-and every date function beyond `MONTH`/`YEAR` will be evaluated **locally**. That is not a bug.
-The bug is what happens next.
+Read that and you have a strong hypothesis: `LIKE`, `NOT IN`, `BETWEEN`, `GROUP BY`, `HAVING`,
+`COUNT`, `SUM` and every date function beyond `MONTH`/`YEAR` are likely evaluated **locally**. That
+is not a bug. The bug is what happens next.
+
+> **`sys_sqlinfo` is a floor, not the contract.** Operators absent from `SUPPORTED_OPERATORS` are
+> sometimes pushed anyway. On the Jira driver `IN` is *not* declared, yet
+> `WHERE ProjectKey IN ('DND','DUM')` compiles to `jql=project IN ("DND","DUM")` with
+> `maxResults` equal to the `TOP` — fully pushed. So treat the declaration as the minimum you can
+> rely on and **always confirm by probing**: an undeclared-but-pushed operator is a documentation
+> gap worth reporting, and assuming it is client-side would have you report a perf bug that does
+> not exist.
 
 **Then, for a Tier A table, read the RSD.** Per column it declares `other:filters`,
 `other:supportOrderBy`, `other:filterName`, `other:isinsertable`, `other:isupdateable`,
@@ -134,6 +154,54 @@ WHERE Name LIKE 'B%'        (undeclared)   {"fields":["id","name"],
 Note what Phase 2 also proves in the first case: `property: "assettype.id"` is exactly the RSD's
 `other:filterName="assettype.id"`. A wrong `filterName` is a classic driver bug and this is how you
 catch it — the API silently ignores an unknown filter property and returns everything.
+
+---
+
+### Batch the probes — one tool call, not twenty
+
+A sweep is dozens of queries you already know in advance, so do not fire them one at a time.
+`execute_java` runs them all against the live connection in a **single** tool call and — verified —
+still returns **one `intercepted_calls` entry per query**, each with its own SQL and duration:
+
+```java
+String[] probes = {
+    "SELECT COUNT(*) AS v FROM T",
+    "SELECT MAX(Amount) AS v FROM T",
+    "SELECT COUNT(*) AS v FROM T WHERE Amount > 100"
+};
+for (String sql : probes) {
+    long t0 = System.currentTimeMillis();
+    try (Statement st = connection.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+        String val = rs.next() ? rs.getString("v") : "(no rows)";
+        __out.append(String.format("%-50s -> %-8s %4dms%n", sql, val, System.currentTimeMillis()-t0));
+    } catch (Exception e) {
+        __out.append(String.format("%-50s -> ERROR %s%n", sql, e.getMessage()));
+    }
+}
+```
+
+Why it is worth it: one round trip instead of *n*, one response envelope instead of *n*, and the
+snippet returns **only the values you need** rather than *n* full row sets. Always wrap each probe
+in its own try/catch — otherwise the first failure aborts the whole batch.
+
+**Four limits that decide what to batch and what not to:**
+
+| Limit | Consequence |
+|---|---|
+| The whole snippet shares one budget (`JDBC_MCP_JAVA_TIMEOUT`, default **30s**) — there is no per-query timeout | A sweep containing scan-prone probes will blow it. **Keep slow or timeout-prone probes as individual `execute_query` calls**, where each gets its own `timeout_seconds` and its own diagnosis |
+| `_meta` carries **one merged** `capture_from`/`capture_to` for the batch | Per-query HTTP attribution is lost. If you need it, keep those probes separate — or have the snippet record the capture file's length between queries itself |
+| No per-query `max_rows` | The snippet decides what it materializes; read only the columns you assert on |
+| `read_only` still applies (it is enforced in the proxy layer) | A batch cannot smuggle a write past the guard |
+
+**Good split in practice:** batch the cheap declared-operator probes, the projection-function
+probes, and the per-table reachability checks. Keep separate: anything you expect to scan
+(`LIKE`, `NOT LIKE`, `IS NULL`, `GROUP BY`, unfiltered `COUNT`), because those are exactly the ones
+that need their own timeout and their own timeout diagnosis.
+
+> **Never try to batch by putting `;` between statements in `execute_query`.** It does not error —
+> it silently runs the **first** statement and discards the rest. Verified: `SELECT COUNT(*) AS n
+> FROM Rows; SELECT MAX(Amount) AS m FROM Rows` returned only `n` with no warning. That is a
+> silent-wrong-answer shape, and the reason `execute_java` is the only real batching route.
 
 ---
 

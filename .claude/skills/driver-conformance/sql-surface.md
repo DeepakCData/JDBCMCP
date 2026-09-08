@@ -209,3 +209,45 @@ never pushed at all. Treat it as **NEEDS-INVESTIGATION** until the body is read,
 
 **`pageSize` told the story every time.** 3 when everything pushed, 500 the moment anything did
 not. Check it before anything else.
+
+---
+
+## 8. Verified example — Jira 2026 (a JQL-compiling driver)
+
+A useful contrast: the Jira driver compiles SQL into **JQL** and pushes filter, projection and limit
+together, so the tell is `maxResults` rather than `pageSize`.
+
+```
+SUPPORTED_OPERATORS   =, !=, >, >=, <, <=, AND, OR, BETWEEN      (no IN declared)
+GROUP_BY / COUNT      NO / NO
+SQL_CAP               select,insert,update,delete,orderby,bulkinsert,offset,limit
+PSEUDO_COLUMNS        JQL, Issues.SprintName, Boards.FilterId, Users.ProjectKey, …
+REPLICATION_TIMECHECK Issues=Updated, Worklogs=IssueUpdatedDate, Comments=IssueUpdatedDate
+```
+
+| Query | Sent as | Verdict |
+|---|---|---|
+| `WHERE ProjectKey='DND'` | `jql=project = "DND"` `&fields=id,key` `&maxResults=3` | pushed — filter, projection *and* limit |
+| `WHERE ProjectKey IN (…)` | `jql=project IN ("DND","DUM")` `&maxResults=3` | pushed **though undeclared** — see the floor note in SKILL.md |
+| `WHERE Summary LIKE 'a%'` | `jql=summary ~ "a*"` `&maxResults=5000` | JQL `~` pushed as a **narrowing pre-filter**, exact `LIKE` re-applied locally. Results verified correct. Good design |
+| `WHERE Summary NOT LIKE 'a%'` | `jql=id is not EMPTY` `&maxResults=5000` | tautology + full scan |
+| `ORDER BY Updated DESC` | `jql=… ORDER BY updated DESC` `&maxResults=3` | pushed |
+| `ORDER BY Updated DESC, Id ASC` | — | **FAIL**: `Unrecognized column [HPC01234567891002]`, and the number increments per call. Any two sort keys break |
+| `COUNT(*) WHERE ProjectKey='DND'` | `jql=project = "DND"` `&maxResults=5000` | client-side count over a filtered scan. **21 at both `max_rows=2` and `5000`** — correct, not truncated |
+| subquery in `IN` | two calls: fetch `Projects`, then `jql=project IN ("DND")` | subquery executed separately and inlined. Good |
+| `SELECT … FROM Sprints` | `/board?maxResults=5000` then `/board/{id}/sprint` per board | **N+1** — 14 requests for 0 rows, linear in board count |
+| `WHERE NAME IN (…)` on `sys_sqlinfo` | — | **FAIL**: 0 rows where `=` returns 1. Scoped to that view; `sys_tables` and real tables are fine |
+
+**Timezone finding worth its own check on any driver with a timecheck column.** `Issues=Updated` is
+the incremental-sync column, and both directions were off:
+
+```
+filter   Updated > '2026-01-01'            ->  jql=updated > "2025-12-31 19:29"    (-4h31m)
+         Updated > '2026-01-01T00:00:00Z'  ->  jql=updated > "2026-01-01 00:59"    (+0h59m)
+value    API sent  2026-09-03T04:26:41.062+0200
+         driver    2026-09-03T07:56:41.062                (local time, offset dropped)
+```
+
+Milliseconds survive, but the offset does not, and neither boundary conversion is a clean offset.
+Add this pair of checks — filter boundary in, value out — to every driver whose
+`REPLICATION_TIMECHECK_COLUMNS` is non-empty.

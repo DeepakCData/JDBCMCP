@@ -4,13 +4,13 @@ Every construct, the SQL to probe it with, and what to look for. Work down the l
 representative table** to establish the driver's surface, then use the per-table section for
 table-specific claims.
 
-Throughout: substitute your table and columns, keep `TOP` small, and read `req_body` from the
+Throughout: substitute your table and columns, keep the row limit small, and read `req_body` from the
 `capture_from`–`capture_to` range — **not** the URL, and never the log from the top.
 
 Shorthand used below:
 
-- **pushed** — the construct appears in the request; `pageSize` equals your `TOP`
-- **local** — no trace of it in the request; `pageSize` jumps to the connector maximum
+- **pushed** — the construct appears in the request; the page size equals your `LIMIT`
+- **local** — no trace of it in the request; the page size jumps to the connector maximum
 - **declared** — listed in `sys_sqlinfo` (`SUPPORTED_OPERATORS` etc.) or in the RSD's
   `other:filters` for that column
 
@@ -23,7 +23,7 @@ Run each against a **filterable** column (RSD `other:filters` lists it) and then
 
 | Construct | Probe |
 |---|---|
-| `=` | `SELECT TOP 3 <cols> FROM T WHERE <col> = <v>` |
+| `=` | `SELECT <cols> FROM T WHERE <col> = <v> LIMIT 3` |
 | `!=` / `<>` | `... WHERE <col> != <v>` |
 | `>` `>=` `<` `<=` | `... WHERE <numeric_or_date> > <v>` |
 | `IN` | `... WHERE <col> IN (<v1>, <v2>)` |
@@ -56,21 +56,48 @@ filtering does.
 
 ---
 
-## 2. ORDER BY, TOP, DISTINCT
+## 2. ORDER BY, LIMIT / OFFSET, DISTINCT
+
+**Use `LIMIT`, not `TOP`.** They push identically for the limit itself, but `TOP` cannot express an
+offset, so it cannot test paging at all — and `LIMIT`/`OFFSET` is what BI tools, ORMs and JDBC
+pagination actually generate, making it the path customers hit.
 
 | Construct | Probe | Watch for |
 |---|---|---|
-| ORDER BY, supported col | `... ORDER BY <col> DESC` | sort in the request; `pageSize` == TOP |
-| ORDER BY, `supportOrderBy="false"` | `... ORDER BY <that_col>` | expect local; expect a full scan |
-| ORDER BY multiple | `... ORDER BY <a>, <b> DESC` | is the *second* key pushed, or only the first? |
-| ORDER BY + TOP | `SELECT TOP 5 ... ORDER BY <col>` | **is it the global top 5, or the top 5 of page 1?** |
+| ORDER BY, supported col | `... ORDER BY <col> DESC LIMIT 3` | sort in the request; page size == 3 |
+| ORDER BY, `supportOrderBy="false"` | `... ORDER BY <that_col> LIMIT 3` | expect local; expect a full scan |
+| ORDER BY multiple | `... ORDER BY <a> DESC, <b> ASC LIMIT 3` | is the *second* key pushed, or only the first? Does it error at all? |
+| ORDER BY + LIMIT | `... ORDER BY <col> LIMIT 5` | **is it the global top 5, or the top 5 of page 1?** |
 | DISTINCT | `SELECT DISTINCT <col> FROM T` | almost always local; correct over the whole table? |
-| TOP alone | `SELECT TOP 3 ...` | `pageSize` should be 3 |
-| No TOP, small `max_rows` | `SELECT <cols> FROM T` with `max_rows: 5` | does `pageSize` follow `max_rows`, or fetch 500? |
+| `LIMIT` alone | `SELECT <cols> FROM T LIMIT 3` | page size should be 3, not the connector maximum |
+| **`LIMIT` + `OFFSET`** | `SELECT <cols> FROM T LIMIT 3 OFFSET 5` | **the key one — see below** |
+| Deep offset | `SELECT <cols> FROM T LIMIT 5 OFFSET 500` | does the request grow with the offset? |
+| No `LIMIT`, small `max_rows` | `SELECT <cols> FROM T` with `max_rows: 5` | does the page size follow `max_rows`, or fetch the maximum? |
 
-`ORDER BY + TOP` deserves its own attention: if the sort is local and the scan is capped, "top 5"
+### OFFSET is where the cost hides, and it differs per table
+
+An API either supports index paging (a `startAt`/`offset` parameter) or token paging (an opaque
+`nextPageToken`). Token paging **cannot** jump to an arbitrary offset, so the driver has to
+over-fetch and discard — which makes `OFFSET` cost O(offset) on those tables and O(1) on the others.
+**Both behaviours are correct; the point is knowing which table you have.**
+
+Verified on Jira 2026:
+
+```
+Issues    LIMIT 3 OFFSET 5   ->  maxResults=8              over-fetch 8, discard 5 locally
+                                                           (/search/jql is nextPageToken-paged,
+                                                            there is no offset parameter to push)
+Projects  LIMIT 2 OFFSET 4   ->  maxResults=2&startAt=4    both pushed exactly
+```
+
+So on `Issues`, `LIMIT 10 OFFSET 10000` fetches **10,010 rows** to return 10. On `Projects` it
+fetches 10. Run the deep-offset probe on every table you care about and record which kind it is —
+a BI tool paging through a token-paged table gets quadratically worse as the user scrolls, and that
+is invisible from the result rows.
+
+`ORDER BY + LIMIT` deserves its own attention: if the sort is local and the scan is capped, "top 5"
 becomes "the 5 highest of however many rows we happened to read". Cross-check by asking for the
-same query with a much larger cap and confirming the same 5 rows come back.
+same query with a much larger `max_rows` and confirming the same 5 rows come back.
 
 ---
 
@@ -109,12 +136,12 @@ in a predicate.
 
 | Group | Probe in the projection | Probe in the predicate |
 |---|---|---|
-| String | `SELECT TOP 3 SUBSTRING(<s>,1,3), UPPER(<s>), LEN(<s>), CONCAT(<s>,'x'), LTRIM(<s>), REPLACE(<s>,'a','b') FROM T` | `... WHERE SUBSTRING(<s>,1,1) = 'B'` |
-| Numeric | `SELECT TOP 3 ABS(<n>), ROUND(<n>,2), FLOOR(<n>), CEILING(<n>) FROM T` | `... WHERE ROUND(<n>,0) = 5` |
-| Date | `SELECT TOP 3 YEAR(<d>), MONTH(<d>), CURRENT_TIMESTAMP FROM T` | `... WHERE YEAR(<d>) = 2026` |
-| Date arithmetic | `SELECT TOP 3 DATEADD(day,-7,<d>), DATEDIFF(day,<d>,CURRENT_TIMESTAMP) FROM T` | `... WHERE <d> > DATEADD(day,-7,CURRENT_TIMESTAMP)` |
-| Casting | `SELECT TOP 3 CAST(<n> AS VARCHAR), CAST(<s> AS INT) FROM T` | — |
-| `NULL` handling | `SELECT TOP 3 ISNULL(<nullable>,'fallback'), COALESCE(<a>,<b>) FROM T` | — |
+| String | `SELECT SUBSTRING(<s>,1,3), UPPER(<s>), LEN(<s>), CONCAT(<s>,'x'), LTRIM(<s>), REPLACE(<s>,'a','b') FROM T LIMIT 3` | `... WHERE SUBSTRING(<s>,1,1) = 'B'` |
+| Numeric | `SELECT ABS(<n>), ROUND(<n>,2), FLOOR(<n>), CEILING(<n>) FROM T LIMIT 3` | `... WHERE ROUND(<n>,0) = 5` |
+| Date | `SELECT YEAR(<d>), MONTH(<d>), CURRENT_TIMESTAMP FROM T LIMIT 3` | `... WHERE YEAR(<d>) = 2026` |
+| Date arithmetic | `SELECT DATEADD(day,-7,<d>), DATEDIFF(day,<d>,CURRENT_TIMESTAMP) FROM T LIMIT 3` | `... WHERE <d> > DATEADD(day,-7,CURRENT_TIMESTAMP)` |
+| Casting | `SELECT CAST(<n> AS VARCHAR), CAST(<s> AS INT) FROM T LIMIT 3` | — |
+| `NULL` handling | `SELECT ISNULL(<nullable>,'fallback'), COALESCE(<a>,<b>) FROM T LIMIT 3` | — |
 
 **The predicate column is where the cost is.** A function wrapped around a filterable column
 usually defeats pushdown entirely — `WHERE YEAR(CreatedDate) = 2026` becomes a full scan, while
@@ -135,8 +162,8 @@ return something odd. Try one deliberately.
 | JOIN | `SELECT a.<x>, b.<y> FROM T a JOIN T2 b ON a.<k> = b.<k>` | usually local: two scans then a local join. Count `capture_entries` |
 | LEFT JOIN | same with `LEFT JOIN` | `OUTER_JOINS=NO` → local or error |
 | UNION | `SELECT <c> FROM T UNION SELECT <c> FROM T2` | local |
-| CASE | `SELECT TOP 3 CASE WHEN <n> > 5 THEN 'hi' ELSE 'lo' END FROM T` | local projection, cheap |
-| Nested filter + sort + limit | `SELECT TOP 5 <cols> FROM T WHERE <pushable> = <v> AND <str> LIKE '%x%' ORDER BY <sortable> DESC` | the realistic customer query — check how much survives pushdown |
+| CASE | `SELECT CASE WHEN <n> > 5 THEN 'hi' ELSE 'lo' END FROM T LIMIT 3` | local projection, cheap |
+| Nested filter + sort + limit | `SELECT <cols> FROM T WHERE <pushable> = <v> AND <str> LIKE '%x%' ORDER BY <sortable> DESC LIMIT 5` | the realistic customer query — check how much survives pushdown |
 | Aliased / quoted identifiers | `SELECT <col> AS [My Col] FROM [T]` | use `IDENTIFIER_QUOTE_OPEN_CHAR` from `sys_sqlinfo` |
 | Parameterised | `execute_prepared` with `?` on a pushable column | the bound value must reach the request; check `params` in the trace |
 
@@ -236,6 +263,8 @@ REPLICATION_TIMECHECK Issues=Updated, Worklogs=IssueUpdatedDate, Comments=IssueU
 | `COUNT(*) WHERE ProjectKey='DND'` | `jql=project = "DND"` `&maxResults=5000` | client-side count over a filtered scan. **21 at both `max_rows=2` and `5000`** — correct, not truncated |
 | subquery in `IN` | two calls: fetch `Projects`, then `jql=project IN ("DND")` | subquery executed separately and inlined. Good |
 | `SELECT … FROM Sprints` | `/board?maxResults=5000` then `/board/{id}/sprint` per board | **N+1** — 14 requests for 0 rows, linear in board count |
+| `Sprints WHERE OriginBoardId = 1548` | still all 14 requests | **FAIL — missed pushdown.** The board filter is applied locally, so 12 boards that cannot match are queried anyway |
+| `BoardSprints WHERE BoardId = 1548` | `/board/1548/sprint?maxResults=3` | **1 request.** Same endpoint, same driver — proof the routing is possible, just not wired to `Sprints` |
 | `WHERE NAME IN (…)` on `sys_sqlinfo` | — | **FAIL**: 0 rows where `=` returns 1. Scoped to that view; `sys_tables` and real tables are fine |
 
 **Timezone finding worth its own check on any driver with a timecheck column.** `Issues=Updated` is

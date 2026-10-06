@@ -104,6 +104,17 @@ public class LoadDriverTool {
             response.put("driver_jar", loaded.driverJar());
             response.put("jars_loaded", loaded.jars());
             response.put("resolved_from", resolvedFrom);
+
+            // Which JAR will actually serve connections. These agree unless something kept an older
+            // registration alive, and a disagreement means later queries would silently run a
+            // different build than the one just loaded — worth failing loudly over, because the
+            // result still looks like an ordinary pass.
+            String inUse = com.cdata.mcp.jdbc.DriverLoader.registeredOrigin(loaded.driverClass());
+            response.put("driver_jar_in_use", inUse == null ? "" : inUse);
+            if (inUse != null && !inUse.equals(loaded.driverJar())) {
+                response.put("warning", "connections will use " + inUse + ", NOT the JAR just loaded ("
+                        + loaded.driverJar() + ") — do not trust results until this is resolved");
+            }
             return ok(response);
         } catch (Exception e) {
             // ClassNotFoundException's message is the bare class name, which read as

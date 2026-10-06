@@ -168,6 +168,57 @@ Nothing outside `<temp>/jdbc_mcp_*` is ever touched.
 
 ---
 
+## Forcing an edge case — `mock_response`
+
+Some driver bugs only appear on a response shape the backend will not produce on demand: a field
+missing from the **first** record, an empty page, a 429, a call slow enough to trip a timeout.
+Without a way to force those, such tickets get "verified" against the fix description instead of
+against the driver.
+
+`mock_response` rewrites backend responses in flight on the proxied path. Rules are written to a
+file the mitmproxy addon reloads on change, so they take effect on the **next backend call** with no
+reconnect.
+
+```jsonc
+// DRIVERS-63278: strip subscriptionId/Name from the first record only
+{ "action": "add", "id": "first-record-gap",
+  "match": { "url_contains": "api.hubapi.com/marketing/v3/emails" },
+  "ops": [ { "op": "remove", "path": "results[0].subscriptionDetails.subscriptionId" },
+           { "op": "remove", "path": "results[0].subscriptionDetails.subscriptionName" } ] }
+```
+
+| Op | Shape | For |
+|---|---|---|
+| `remove` | `{"op":"remove","path":"results[0].a.b"}` | a field absent from one record |
+| `set` | `{"op":"set","path":"results[*].status","value":"X"}` | force a value; creates the key if absent |
+| `move_to_front` | `{"op":"move_to_front","path":"results","where_missing":"a.b"}` | reorder so the incomplete record is first |
+| `truncate` | `{"op":"truncate","path":"results","keep":0}` | empty page / pagination boundary |
+| `status` | `{"op":"status","value":429}` | error-path handling |
+| `header` | `{"op":"header","name":"Retry-After","value":"30"}` | paging/retry headers |
+| `body` | `{"op":"body","value":"not json"}` | malformed-response handling |
+| `delay` | `{"op":"delay","ms":5000}` | latency and timeout behaviour |
+
+Paths are dotted with `[n]` and `[*]`. `match` needs at least one of `url_contains`, `url_regex`,
+`method`, `status`, `body_contains` — a rule matching everything is refused, because it would
+rewrite unrelated traffic. `max_hits` caps how many responses a rule touches.
+
+**A mock that silently does nothing is worse than no mock**, so the forcing is made loud:
+
+- Every mutated response carries a `mock` block in the capture log naming the rule and what it
+  changed, next to the post-mutation `resp_body` the driver actually parsed.
+- An op that matched nothing reports `affected: 0` — the path is wrong and the driver saw live data.
+- While any rule is armed, every query's `_meta` carries `mock_rules_active`, `connect` reports it,
+  and `get_test_report` prints a warning banner.
+- Rules are cleared at server start, because one surviving a restart would rewrite a later,
+  unrelated run into a confident wrong verdict.
+
+Rules are shared by every session on the server. **Call `{"action":"clear"}` when the test is
+done**, and say in the ticket which checks ran against forced data.
+
+Engine tests (no mitmproxy or network needed): `python src/test/python/test_proxy_addon.py`.
+
+---
+
 ## Configuration (env vars, all optional)
 
 | What | Env var | Default |
@@ -180,6 +231,7 @@ Nothing outside `<temp>/jdbc_mcp_*` is ever touched.
 | Force read-only sessions | `JDBC_MCP_READ_ONLY` | false |
 | mitmproxy port | `JDBC_MCP_MITM_PORT` | 8889 |
 | mitmproxy JSONL path | `JDBC_MCP_MITM_LOG_PATH` | `<temp>/jdbc_mcp_proxy.jsonl` |
+| Mock rules path | `JDBC_MCP_MOCK_RULES_PATH` | `<temp>/jdbc_mcp_mock_rules.json` |
 | Non-proxyable driver list | `JDBC_MCP_NO_PROXY_DRIVERS` | see `Config.java` |
 | File-driver list | `JDBC_MCP_FILE_DRIVERS` | excel,csv,json,xml,parquet,avro,orc |
 | CData log verbosity (1–5) | `JDBC_MCP_LOG_VERBOSITY` | 5 |

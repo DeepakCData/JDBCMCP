@@ -17,6 +17,7 @@ package com.cdata.mcp.config;
  *   readOnlyDefault       -Djdbc.mcp.readOnly            / JDBC_MCP_READ_ONLY
  *   mitmProxyPort         -Djdbc.mcp.mitmPort            / JDBC_MCP_MITM_PORT
  *   mitmLogPath           -Djdbc.mcp.mitmLogPath         / JDBC_MCP_MITM_LOG_PATH
+ *   mockRulesPath         -Djdbc.mcp.mockRulesPath       / JDBC_MCP_MOCK_RULES_PATH
  *   noProxyDrivers        -Djdbc.mcp.noProxyDrivers      / JDBC_MCP_NO_PROXY_DRIVERS
  *   fileDrivers           -Djdbc.mcp.fileDrivers         / JDBC_MCP_FILE_DRIVERS
  *   driverLogVerbosity    -Djdbc.mcp.logVerbosity        / JDBC_MCP_LOG_VERBOSITY
@@ -56,6 +57,12 @@ public final class Config {
     public static String mitmLogPath() {
         String def = System.getProperty("java.io.tmpdir") + java.io.File.separator + "jdbc_mcp_proxy.jsonl";
         return strCfg("jdbc.mcp.mitmLogPath", "JDBC_MCP_MITM_LOG_PATH", def);
+    }
+
+    /** Path to the response-mocking rules the mitmproxy addon reloads on change. */
+    public static String mockRulesPath() {
+        String def = System.getProperty("java.io.tmpdir") + java.io.File.separator + "jdbc_mcp_mock_rules.json";
+        return strCfg("jdbc.mcp.mockRulesPath", "JDBC_MCP_MOCK_RULES_PATH", def);
     }
 
     /**

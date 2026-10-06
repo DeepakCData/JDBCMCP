@@ -52,6 +52,16 @@ public class GetTestReportTool {
         md.append("**Checks:** ").append(passed).append(" passed, ").append(failed).append(" failed, ")
           .append(total).append(" total\n\n");
 
+        // A report that does not say responses were being rewritten is a report someone will quote
+        // as evidence of live behaviour.
+        int mocks = com.cdata.mcp.mitm.MockRules.activeCount();
+        if (mocks > 0) {
+            md.append("> ⚠️ **Response mocking was ARMED during this session** (")
+              .append(mocks).append(" rule(s)). Results below may come from rewritten backend responses. ")
+              .append("Mutated responses are marked with a `mock` block in the capture log; state in the ticket ")
+              .append("which checks ran against forced data.\n\n");
+        }
+
         if (total > 0) {
             md.append("| # | Criterion | Status | Detail |\n");
             md.append("|---|-----------|--------|--------|\n");

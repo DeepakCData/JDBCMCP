@@ -334,7 +334,10 @@ public class ConnectTool {
                     Map.entry("proxy_fallback",       proxyFallback),
                     Map.entry("proxy_fallback_reason", proxyFallbackReason),
                     Map.entry("capture_check",        captureCheck),
-                    Map.entry("probe_sql",            probeSql.toString())
+                    Map.entry("probe_sql",            probeSql.toString()),
+                    // Rules armed by mock_response are shared by every session on this server, so a
+                    // new connection has to be told it is about to read rewritten responses.
+                    Map.entry("mock_rules_active",    com.cdata.mcp.mitm.MockRules.activeCount())
             ));
         } catch (Exception e) {
             // Redact secrets from the connection string before surfacing the error.

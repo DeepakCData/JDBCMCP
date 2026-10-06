@@ -180,8 +180,42 @@ public class DriverLoader {
         // meaningful if it is the driver under test.
         String origin = requireFromAny(clazz, jars);
         Driver driver = (Driver) clazz.getDeclaredConstructor().newInstance();
-        DriverManager.registerDriver(new DriverShim(driver));
+
+        // Retire any driver already registered for this class before registering the new one.
+        //
+        // DriverManager.getConnection picks the FIRST registered driver whose acceptsURL matches,
+        // so without this a second load_driver of the same connector — a different build of it,
+        // which is the whole point of comparing a pre-fix JAR against a post-fix one — registered
+        // fine and was then never used: every connection kept going to the build loaded first,
+        // while load_driver reported the new driver_jar. The wrong build serving a test that reads
+        // as passing is the worst failure this tool has, so the newest load wins.
+        retireRegistered(className);
+
+        DriverShim shim = new DriverShim(driver, className, origin);
+        DriverManager.registerDriver(shim);
         return new Loaded(className, origin, jars);
+    }
+
+    /** Deregisters every shim previously registered for {@code className}. */
+    private static void retireRegistered(String className) {
+        for (Driver d : java.util.Collections.list(DriverManager.getDrivers())) {
+            if (d instanceof DriverShim shim && shim.driverClass.equals(className)) {
+                try {
+                    DriverManager.deregisterDriver(d);
+                } catch (SQLException ignored) {
+                    // Best effort: a driver that refuses deregistration still gets superseded only
+                    // if it is gone, so report it rather than failing the load outright.
+                }
+            }
+        }
+    }
+
+    /** Where the currently registered driver for {@code className} was loaded from, or null. */
+    public static String registeredOrigin(String className) {
+        for (Driver d : java.util.Collections.list(DriverManager.getDrivers())) {
+            if (d instanceof DriverShim shim && shim.driverClass.equals(className)) return shim.origin;
+        }
+        return null;
     }
 
     // ---- single-JAR convenience overloads -------------------------------------------------
@@ -340,8 +374,15 @@ public class DriverLoader {
     // DriverManager refuses drivers loaded by a non-system classloader unless shimmed.
     private static class DriverShim implements Driver {
         private final Driver wrapped;
+        /** Which class and JAR this shim stands for, so a later load can retire exactly this one. */
+        final String driverClass;
+        final String origin;
 
-        DriverShim(Driver d) { this.wrapped = d; }
+        DriverShim(Driver d, String driverClass, String origin) {
+            this.wrapped = d;
+            this.driverClass = driverClass;
+            this.origin = origin;
+        }
 
         @Override public java.sql.Connection connect(String url, java.util.Properties info) throws SQLException { return wrapped.connect(url, info); }
         @Override public boolean acceptsURL(String url) throws SQLException { return wrapped.acceptsURL(url); }

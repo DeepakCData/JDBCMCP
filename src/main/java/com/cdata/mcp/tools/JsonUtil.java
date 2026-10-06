@@ -81,6 +81,15 @@ public class JsonUtil {
         if (extra != null) m.putAll(extra);
         Map<String, Object> range = session.captureRange();
         if (range != null) m.putAll(range);
+        // Only when something is armed. Rows produced under a response mock are not live backend
+        // data, and a result read without knowing that is how a forced edge case gets reported as
+        // real behaviour — so it travels with every result rather than waiting to be asked for.
+        int mocks = com.cdata.mcp.mitm.MockRules.activeCount();
+        if (mocks > 0) {
+            m.put("mock_rules_active", mocks);
+            m.put("mock_warning", "response mocking is ARMED — rows may be rewritten in flight; "
+                    + "check the \"mock\" blocks in the capture range, and clear rules when done");
+        }
         return m;
     }
 

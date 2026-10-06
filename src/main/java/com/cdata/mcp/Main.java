@@ -1,6 +1,7 @@
 package com.cdata.mcp;
 
 import com.cdata.mcp.log.LogJanitor;
+import com.cdata.mcp.mitm.MockRules;
 import com.cdata.mcp.tools.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
@@ -19,6 +20,9 @@ public class Main {
         // stdout — that channel is MCP JSON-RPC only).
         System.err.println("[jdbc-mcp] " + LogJanitor.rotateMitmLog());
         System.err.println("[jdbc-mcp] " + LogJanitor.sweep().summary());
+        // Response mocks are per-run on purpose: one surviving a restart would quietly rewrite a
+        // later, unrelated QA run into a wrong verdict.
+        System.err.println("[jdbc-mcp] " + MockRules.clearStale());
 
         JacksonMcpJsonMapper jsonMapper = new JacksonMcpJsonMapper(new ObjectMapper());
         StdioServerTransportProvider transport = new StdioServerTransportProvider(jsonMapper);
@@ -38,6 +42,7 @@ public class Main {
                 .toolCall(CompareQueriesTool.tool(), CompareQueriesTool::handle)
                 .toolCall(GetTestReportTool.tool(), GetTestReportTool::handle)
                 .toolCall(ExportResultsTool.tool(), ExportResultsTool::handle)
+                .toolCall(MockResponseTool.tool(),  MockResponseTool::handle)
                 .toolCall(DisconnectTool.tool(),    DisconnectTool::handle)
                 .build();
 

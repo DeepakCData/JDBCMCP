@@ -60,6 +60,7 @@ public final class MitmProxyManager {
                 // Pass the resolved log path to the addon so the -Djdbc.mcp.mitmLogPath system-property
                 // form is honored too (the Python addon only reads the JDBC_MCP_MITM_LOG_PATH env var).
                 pb.environment().put("JDBC_MCP_MITM_LOG_PATH", Config.mitmLogPath());
+                pb.environment().put("JDBC_MCP_MOCK_RULES_PATH", Config.mockRulesPath());
 
                 process = pb.start();
                 managedPort = port;

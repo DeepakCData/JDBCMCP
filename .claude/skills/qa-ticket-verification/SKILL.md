@@ -489,6 +489,37 @@ the new column if specified. 5. Write test only if the ticket specifies DML.
 Use `execute_prepared` exclusively. Verify `intercepted_calls` shows `prepareStatement` with `?`
 placeholders, the right `setXxx` calls, and the bound values. No `SQLFeatureNotSupportedException`.
 
+### The repro needs a response shape the account will not produce
+
+Some tickets only reproduce on a response the live backend rarely returns — a field missing from
+the **first** record, an empty page, a 429, a call slow enough to trip a timeout. The ticket often
+says it was reproduced with an autoresponder. Do **not** downgrade these to "fix review only":
+`mock_response` forces the shape through the proxy that is already in the session.
+
+```jsonc
+// e.g. DRIVERS-63278 — first record lacks the nested keys, later records have them
+{ "action": "add", "id": "first-record-gap",
+  "match": { "url_contains": "api.hubapi.com/marketing/v3/emails" },
+  "ops": [ { "op": "remove", "path": "results[0].subscriptionDetails.subscriptionId" } ] }
+```
+
+Ops: `remove`, `set`, `move_to_front`, `truncate` (JSON body, dotted paths with `[n]`/`[*]`),
+`status`, `header`, `body`, `delay` (response level). Rules apply to the next backend call with no
+reconnect. Requires `proxy_applied: true`.
+
+Four rules when testing under a mock:
+
+1. **Prove the mock fired before trusting the result.** Read the call's `capture_from`–`capture_to`
+   range and find the `mock` block. An op reporting `affected: 0` means the path was wrong and the
+   driver saw live data — a PASS there proves nothing.
+2. **Run the same query unmocked too.** The mock proves the fixed code path; the live query proves
+   you did not break the normal one.
+3. **Clear rules the moment the test is done** (`{"action":"clear"}`). They are shared by every
+   session on the server, so one left armed rewrites someone else's run.
+4. **Say so in the report.** State which checks ran against forced data and what was forced — a
+   mocked PASS and a live PASS are different evidence, and `get_test_report` prints a banner
+   whenever rules were armed.
+
 ### Regression smoke suite
 ```sql
 SELECT * FROM sys_tables LIMIT 20
@@ -616,6 +647,7 @@ row, and `SELECT *` spent 6.1s inside a single request. Prefer a filtered count
 | `assert_query` | Assert row count / scalar / existence | `session_id`, `sql`, `expected_row_count`, `expected_value`, `comparator` (`eq`\|`ne`\|`gt`\|`gte`\|`lt`\|`lte`), `criterion` |
 | `compare_queries` | Diff two result sets (order-insensitive) | `session_id`, `sql_actual`, `sql_expected`, `criterion` |
 | `record_check` | Record a non-SQL pass/fail check | `session_id`, `criterion`, `passed`, `detail`, `sql` |
+| `mock_response` | Force a backend response shape (proxied path only) | `action` (`add`\|`list`\|`clear`), `match`, `ops`, `id`, `max_hits`, `rule_id` |
 | `export_results` | Export a SELECT to CSV (UTF-8, RFC4180) | `session_id`, `sql`, `file_path`, `max_rows` |
 | `get_test_report` | Markdown pass/fail report | `session_id` |
 | `list_sessions` | List open sessions | _(none)_ |

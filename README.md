@@ -7,17 +7,19 @@ metadata, capture the driver's HTTP traffic through an auto-managed mitmproxy, a
 evidence-backed pass/fail reports for Jira tickets (via the bundled `qa-ticket-verification`
 Claude skill).
 
-**14 tools:** `load_driver`, `connect`, `execute_query`, `execute_update`, `execute_prepared`,
+**15 tools:** `load_driver`, `connect`, `execute_query`, `execute_update`, `execute_prepared`,
 `execute_java`, `get_metadata`, `list_sessions`, `disconnect`, `record_check`,
-`assert_query`, `compare_queries`, `get_test_report`, `export_results`.
+`assert_query`, `compare_queries`, `get_test_report`, `export_results`,
+[`mock_response`](#forcing-an-edge-case--mock_response).
 
 **Permissions:** the checked-in [.claude/settings.json](.claude/settings.json) allowlists every
 read/list/search tool on `jdbc-platform`, Jira (`atlassian`), and Azure DevOps (`azure-devops`),
 plus read-only shell commands — so Claude reads freely without prompting. Writes
-(`execute_update`, `connect`/`disconnect`, any Jira/ADO create/update/comment tool) always still
-prompt. This assumes the companion servers are registered under the names `atlassian` and
-`azure-devops` (see ONBOARDING.md Phase 5) — a different registration name means those specific
-reads will prompt too, until matching rules are added locally.
+(`execute_update`, `connect`/`disconnect`, `load_driver`, `mock_response`, any Jira/ADO
+create/update/comment tool) always still prompt — `mock_response` deliberately so, since arming a
+rule changes what every later query sees. This assumes the companion servers are registered under
+the names `atlassian` and `azure-devops` (see ONBOARDING.md Phase 5) — a different registration
+name means those specific reads will prompt too, until matching rules are added locally.
 
 ---
 
@@ -85,6 +87,34 @@ otherwise `load_driver` could report a completely different driver as loaded. Th
 response names `driver_jar`, the JAR that actually defined the registered class, so what is under
 test is never in doubt. When a connector needs a companion JAR and does not have one, `connect`
 fails with a missing class and the error says exactly that.
+
+## Comparing two builds of the same driver
+
+Loading a second build of a connector you have already loaded — a pre-fix JAR against a post-fix
+one, which is how you prove a ticket's fix actually changed the behaviour — **supersedes** the
+first. The most recent `load_driver` wins, and connections opened afterwards use it.
+
+```jsonc
+// 1. pre-fix build        → connect → reproduce the bug
+{ "jar_path": "C:/builds/prefix/cdata.jdbc.hubspot.jar", "driver_name": "hubspot" }
+// 2. post-fix build       → connect → same query, correct result
+{ "jar_path": "C:/Program Files/CData/.../cdata.jdbc.hubspot.jar", "driver_name": "hubspot" }
+```
+
+Two fields make this checkable, and you should check them:
+
+- **`driver_jar_in_use`** on the `load_driver` response — the JAR that will actually serve
+  connections. It normally equals `driver_jar`; if it ever does not, the response carries a
+  `warning` and the results cannot be trusted.
+- **`driver_version`** on the `connect` response — read it back against the build you meant to
+  load. For CData drivers the last segment is the build number (`26.0.9750.0` → build 9750, days
+  since 2000-01-01), so it tells you unambiguously which one answered.
+
+This matters because the failure it replaces was silent: before, every registered driver stayed
+registered and `DriverManager` kept handing out whichever was loaded **first**, so a pre-fix JAR
+could be loaded, a repro run against it, and the test pass — while the post-fix driver quietly
+served every query. A wrong build produces an ordinary-looking pass, so verify the version rather
+than assuming the load took.
 
 ## Proxy & traffic-capture rules (read before your first connect)
 
@@ -253,8 +283,12 @@ Each also has a `-Djdbc.mcp.*` system-property form — see
 ONBOARDING.md                      Agent-driven setup runbook — hand this to Claude
 CLAUDE.md                          Project instructions for Claude Code
 .claude/skills/qa-ticket-verification/   The Jira QA skill (phases, strategies, pitfalls)
+.claude/skills/driver-conformance/       The full SQL-surface conformance skill
 src/main/java/com/cdata/mcp/       Server source (tools, JDBC proxy tracing, mitm manager)
-src/main/resources/proxy_addon.py  mitmproxy addon — bundled in the JAR, auto-extracted at runtime
+src/main/resources/proxy_addon.py  mitmproxy addon (capture + response mocking) — bundled in the
+                                   JAR, auto-extracted at runtime
+src/test/python/                   Standalone tests for the addon's mocking engine; no JUnit in
+                                   this project, so run them directly with python
 mvnw.cmd / mvnw                    Self-provisioning Maven wrapper (Windows / macOS-Linux)
 ```
 

@@ -19,3 +19,6 @@ __pycache__/
 # Runtime logs and capture artifacts
 mitm_requests.log
 *.jsonl
+
+# Local working documents — not for a public repo
+docs/
